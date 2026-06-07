@@ -111,7 +111,7 @@ class _NavigationFrameworkState extends State<NavigationFramework>
                   IconButton(
                     icon: Icon(FluentIcons.home, size: 16),
                     onPressed: () {
-                      Navigator.of(context, rootNavigator: true)
+                      _navigatorKey.currentState?.navigator
                           .popUntil((route) => route.isFirst);
                     },
                   ),
