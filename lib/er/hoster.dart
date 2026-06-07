@@ -24,14 +24,48 @@ class Hoster {
     "https://77.88.8.8/dns-query", // Yandex DNS (备)
     "https://130.59.31.248/dns-query", // switch.ch DNS
     "https://130.59.31.251/dns-query", // switch.ch DNS (备)
+    "https://119.29.29.29/dns-query", // Tencent DNS (Pixiv-Nginx)
   ];
 
-  /// 1.1.1.1 作为 UDP DNS 备用
-  // ignore: unused_field
-  static const _udpDnsServer = "1.1.1.1";
+  /// Pixiv API 源站 IP 池（参考 Pixiv-Nginx www-pixiv-net upstream）
+  static const _apiIpPool = [
+    '210.140.139.154',
+    '210.140.139.155',
+    '210.140.139.156',
+    '210.140.139.157',
+    '210.140.139.158',
+    '210.140.139.159',
+    '210.140.139.160',
+    '210.140.139.161',
+    '210.140.139.162',
+  ];
+
+  /// Pixiv 图片源站 IP 池（参考 Pixiv-Nginx i-pximg-net upstream）
+  static const _imageIpPool = [
+    '210.140.92.141',
+    '210.140.92.142',
+    '210.140.92.143',
+    '210.140.92.144',
+    '210.140.92.145',
+    '210.140.92.146',
+    '210.140.92.148',
+    '210.140.92.149',
+    '210.140.139.131',
+    '210.140.139.132',
+    '210.140.139.133',
+    '210.140.139.134',
+    '210.140.139.135',
+    '210.140.139.136',
+  ];
   static Map<String, dynamic> hardMap() {
     return _map.isEmpty ? _constMap : _map;
   }
+
+  /// API 源站 IP 池（用于 rhttp DNS 多 IP 解析）
+  static List<String> apiPool() => List.unmodifiable(_apiIpPool);
+
+  /// 图片源站 IP 池
+  static List<String> imagePool() => List.unmodifiable(_imageIpPool);
 
   static final List<String> QUERY_HOST = [
     ImageHost,

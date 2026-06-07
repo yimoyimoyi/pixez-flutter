@@ -43,8 +43,13 @@ class PixezNetworkSettings {
       tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
-          final ip = _compatibleIp(host);
-          if (ip != null) return [ip];
+          // 优先使用预配置的源站 IP 池（参考 Pixiv-Nginx）
+          final ips = _compatibleIps(host);
+          if (ips.isNotEmpty) return ips;
+          // 回退到 DNS 缓存结果
+          final cached = _compatibleCachedIp(host);
+          if (cached != null) return [cached];
+          // 最后走系统 DNS
           return await InternetAddress.lookup(
             host,
           ).then((value) => value.map((e) => e.address).toList());
@@ -53,7 +58,19 @@ class PixezNetworkSettings {
     );
   }
 
-  static String? _compatibleIp(String host) {
+  /// 返回源站 IP 池（多 IP，参考 Pixiv-Nginx upstream）
+  static List<String> _compatibleIps(String host) {
+    if (host == appApiHost || host == oauthHost || host == accountHost) {
+      return Hoster.apiPool();
+    }
+    if (host == imageHost || host == imageStaticHost) {
+      return Hoster.imagePool();
+    }
+    return const [];
+  }
+
+  /// 返回 DNS 缓存的单个 IP（回退用）
+  static String? _compatibleCachedIp(String host) {
     if (host == appApiHost) return Hoster.api();
     if (host == oauthHost) return Hoster.oauth();
     if (host == imageHost) return Hoster.iPximgNet();
