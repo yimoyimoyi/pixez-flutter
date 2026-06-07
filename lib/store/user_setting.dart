@@ -331,6 +331,10 @@ abstract class _UserSetting with Store {
   setPictureSource(String value) async {
     await prefs.setString(PICTURE_SOURCE_KEY, value);
     pictureSource = value;
+    splashStore.setHost(value);
+    // 切换图床后重建 HTTP 客户端和通知下载 Isolate
+    await _applyNetworkClients();
+    fetcher.reloadNetwork();
   }
 
   @action

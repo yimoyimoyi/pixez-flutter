@@ -29,9 +29,12 @@ class PixezNetworkSettings {
     return compatible();
   }
 
-  static r.ClientSettings? forImages(NetworkMode mode) {
+  /// [pictureSource] 可选，用于子 Isolate 场景传入正确的图床地址。
+  /// 不传则读取全局 [userSetting.pictureSource]（仅主 Isolate 有效）。
+  static r.ClientSettings? forImages(NetworkMode mode, {String? pictureSource}) {
     if (mode == NetworkMode.standard) return null;
-    if (userSetting.pictureSource != imageHost) return null;
+    final source = pictureSource ?? userSetting.pictureSource;
+    if (source != imageHost) return null;
     return compatible();
   }
 

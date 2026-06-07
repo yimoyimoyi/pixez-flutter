@@ -204,7 +204,10 @@ class Fetcher {
     sendPortToChild?.send(
       IsoContactBean(
         state: IsoTaskState.RELOAD,
-        data: userSetting.networkMode,
+        data: (
+          networkMode: userSetting.networkMode,
+          pictureSource: userSetting.pictureSource,
+        ),
       ),
     );
   }
@@ -298,10 +301,12 @@ entryPoint(SendMessage message) async {
     try {
       IsoContactBean isoContactBean = message;
       if (isoContactBean.state == IsoTaskState.RELOAD) {
-        final mode = isoContactBean.data as NetworkMode;
-        currentNetworkMode = mode;
+        final data = isoContactBean.data
+            as ({NetworkMode networkMode, String? pictureSource});
+        currentNetworkMode = data.networkMode;
+        currentPictureSource = data.pictureSource ?? currentPictureSource;
         // 独立版本：RELOAD时自定义图床走系统默认HTTP
-        final reloadUseCompat = mode != NetworkMode.standard &&
+        final reloadUseCompat = data.networkMode != NetworkMode.standard &&
                                  currentPictureSource == ImageHost;
         final newClient = await r.RhttpCompatibleClient.createSync(
           settings: reloadUseCompat ? PixezNetworkSettings.compatible() : null,
