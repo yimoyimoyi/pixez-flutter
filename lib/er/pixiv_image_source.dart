@@ -84,12 +84,15 @@ class PixivImageSource {
     final sourceUri = Uri.parse(normalizedSource);
     if (sourceUri.host.isEmpty) return uri;
 
+    // 将原始主机编码到路径首段 → Worker 据此确定上游 Pixiv 主机
+    final pathWithHost = '/${uri.host}${uri.path}';
+
     return uri.replace(
       scheme: sourceUri.scheme.isEmpty ? uri.scheme : sourceUri.scheme,
       userInfo: sourceUri.userInfo,
       host: sourceUri.host,
       port: sourceUri.hasPort ? sourceUri.port : null,
-      path: _joinPaths(sourceUri.path, uri.path),
+      path: _joinPaths(sourceUri.path, pathWithHost),
     );
   }
 

@@ -221,8 +221,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                 onPressed: () => Navigator.of(context)
                     .popUntil((route) => route.isFirst),
                 tooltip: '主页',
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
