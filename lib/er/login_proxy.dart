@@ -1,11 +1,10 @@
 /// Pixiv 登录本地反向代理
 ///
-/// WebView (HTTP) → 本地代理 → rhttp compat (HTTPS) → Pixiv 源站 IP
+/// 参考 Workers proxyApi 的 redirect:'manual' + rewriteLocation 模式。
+/// 关键差异：使用路径前缀编码目标主机，而非查询参数。
 ///
-/// 为什么需要：
-/// - Cloudflare Workers 出口 IP 被 Pixiv 封锁（403 Forbidden）
-/// - compat 模式直连可以绕过，但 WebView TLS 栈不支持 sni:false
-/// - 本代理在本地做 HTTP↔HTTPS 桥接，TLS 由 rhttp compat 处理
+/// URL 格式: http://127.0.0.1:9876/{pixiv-host}/{path}?{query}
+/// 示例: http://127.0.0.1:9876/app-api.pixiv.net/web/v1/login?code_challenge=...
 library;
 
 import 'dart:convert';
@@ -31,8 +30,9 @@ class LoginProxy {
     );
     _dio = Dio();
     _dio!.httpClientAdapter = ConversionLayerAdapter(client);
-    _dio!.options.followRedirects = true; // 代理侧跟随 302 重定向
-    _dio!.options.maxRedirects = 10;
+    // 关键：不跟随重定向，让 WebView 处理（参考 Workers redirect:'manual'）
+    _dio!.options.followRedirects = false;
+    _dio!.options.maxRedirects = 999;
     _dio!.options.validateStatus = (_) => true;
 
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
@@ -50,31 +50,32 @@ class LoginProxy {
 
   static Future<void> _handleRequest(HttpRequest request) async {
     try {
-      final targetHost = _resolveTargetHost(request);
-      if (targetHost == null) {
+      final parsed = _parse(request);
+      if (parsed == null) {
         request.response.statusCode = 400;
-        request.response.write("Bad Request");
+        request.response.write("Bad Request: cannot parse target host");
         await request.response.close();
         return;
       }
+      final (targetHost, remainingPath, query) = parsed;
 
-      final targetUrl = _buildTargetUrl(targetHost, request.uri);
-
+      final targetUrl = Uri.https(targetHost, remainingPath, query.isNotEmpty ? Uri.splitQueryString(query) : null);
       LPrinter.d("Proxy: ${request.method} $targetUrl");
 
-      // 构造请求头
+      // 构造上游请求头
       final headers = <String, dynamic>{
+        'host': targetHost,
         'accept-language': 'zh-cn',
         'user-agent': 'PixivAndroidApp/5.0.166 (Android 10.0; Pixel C)',
+        'referer': 'https://app-api.pixiv.net/',
       };
       request.headers.forEach((name, values) {
-        if (name.toLowerCase() != 'host' &&
-            name.toLowerCase() != 'content-length') {
+        final lower = name.toLowerCase();
+        if (lower != 'host' && lower != 'content-length' && lower != 'referer') {
           headers[name] = values.join(', ');
         }
       });
 
-      // 读取请求体
       List<int>? body;
       if (request.method != 'GET' && request.method != 'HEAD') {
         body = await request.fold<List<int>>(<int>[], (prev, chunk) {
@@ -83,7 +84,6 @@ class LoginProxy {
         });
       }
 
-      // 通过 rhttp compat 转发请求
       final response = await _dio!.requestUri(
         targetUrl,
         data: body,
@@ -96,23 +96,32 @@ class LoginProxy {
       final statusCode = response.statusCode ?? 502;
       request.response.statusCode = statusCode;
 
-      // 复制响应头
       final respHeaders = response.headers.map;
       respHeaders.forEach((name, values) {
         final lower = name.toLowerCase();
-        if (lower != 'content-encoding' &&
-            lower != 'transfer-encoding' &&
-            lower != 'content-length') {
+        if (lower == 'content-encoding' || lower == 'transfer-encoding') return;
+
+        if (lower == 'location') {
           for (final v in values) {
-            request.response.headers.add(name, v);
+            request.response.headers.add(name, _rewriteLocation(v));
           }
+          return;
+        }
+
+        if (lower == 'set-cookie') {
+          for (final v in values) {
+            request.response.headers.add(name, _rewriteCookie(v));
+          }
+          return;
+        }
+
+        for (final v in values) {
+          request.response.headers.add(name, v);
         }
       });
 
-      // 改写 Pixiv URL：HTML/CSS/JS 中的外链都走代理
       final contentType = respHeaders['content-type']?.firstOrNull ?? '';
-      final isRewritable =
-          contentType.contains('text/html') ||
+      final isRewritable = contentType.contains('text/html') ||
           contentType.contains('application/xhtml') ||
           contentType.contains('text/css') ||
           contentType.contains('application/javascript') ||
@@ -120,12 +129,11 @@ class LoginProxy {
 
       if (isRewritable && response.data != null) {
         String body = utf8.decode(response.data as List<int>);
-        body = _rewriteUrls(body);
-        final ct = contentType.contains('text/html') ||
-                contentType.contains('xhtml')
-            ? 'text/html; charset=utf-8'
-            : contentType;
-        request.response.headers.set('content-type', ct);
+        body = body.replaceAllMapped(
+          RegExp(r'https://([a-z0-9.-]+\.pixiv\.net)(\S*)', caseSensitive: false),
+          (m) => 'http://127.0.0.1:$port/${m.group(1)}${m.group(2)}',
+        );
+        request.response.headers.set('content-type', contentType);
         request.response.write(body);
       } else if (response.data != null) {
         request.response.add(response.data as List<int>);
@@ -141,55 +149,59 @@ class LoginProxy {
     }
   }
 
-  /// 从请求中解析目标 Pixiv 主机
-  static String? _resolveTargetHost(HttpRequest request) {
-    // 自定义 header
-    final pixivHost = request.headers['x-pixiv-host']?.firstOrNull;
-    if (pixivHost != null && pixivHost.endsWith('.pixiv.net')) {
-      return pixivHost;
-    }
-    // 查询参数 __host
-    final hostParam = request.uri.queryParameters['__host'];
-    if (hostParam != null && hostParam.endsWith('.pixiv.net')) {
-      return hostParam;
-    }
-    // 根据路径模式推断
-    final path = request.uri.path;
-    if (path.contains('accounts.pixiv.net')) return 'accounts.pixiv.net';
-    if (path.contains('oauth.secure.pixiv.net')) return 'oauth.secure.pixiv.net';
+  // ============ URL/Header 改写 ============
 
-    // 默认：登录入口
-    return 'app-api.pixiv.net';
+  /// 改写 Location 头（参考 Workers rewriteLocation）
+  /// https://accounts.pixiv.net/login → http://127.0.0.1:9876/accounts.pixiv.net/login
+  static String _rewriteLocation(String url) {
+    for (final host in _pixivHosts) {
+      final prefix = 'https://$host';
+      if (url.startsWith(prefix)) {
+        return url.replaceFirst(prefix, 'http://127.0.0.1:$port/$host');
+      }
+    }
+    return url;
   }
 
-  /// 改写 HTML/CSS/JS 中 Pixiv 域名 URL，确保所有子资源也走本代理
-  static String _rewriteUrls(String content) {
-    // 匹配所有上下文中的 https://*.pixiv.net URL
-    // 包括: HTML (href, src, action), CSS (url()), JS (字符串), meta refresh
-    return content.replaceAllMapped(
-      RegExp(r"https://([a-z0-9.-]+\.pixiv\.net)(\S*)", caseSensitive: false),
-      (match) {
-        final host = match.group(1)!;
-        final rest = match.group(2) ?? '';
-        return 'http://127.0.0.1:$port/__host=$host$rest';
-      },
-    );
+  /// 改写 Set-Cookie domain（确保 cookie 在代理域名下也能发送）
+  static String _rewriteCookie(String cookie) {
+    return cookie
+        .replaceAll(RegExp(r'[Dd]omain=\s*\.?pixiv\.net'), 'Domain=127.0.0.1')
+        .replaceAll(RegExp(r'[Dd]omain=\s*\.?pximg\.net'), 'Domain=127.0.0.1');
   }
 
-  /// 构造代理目标 URL（保留原始 query string）
-  static Uri _buildTargetUrl(String host, Uri original) {
-    final path = original.path;
-    if (original.hasQuery) {
-      return Uri.https(host, path, Uri.splitQueryString(original.query));
-    }
-    return Uri.https(host, path);
+  static const _pixivHosts = [
+    'app-api.pixiv.net',
+    'accounts.pixiv.net',
+    'oauth.secure.pixiv.net',
+    'www.pixiv.net',
+    'pixiv.net',
+    'i.pximg.net',
+    's.pximg.net',
+  ];
+
+  // ============ 请求解析 ============
+
+  /// 解析代理 URL，提取 (目标主机, 剩余路径, 查询字符串)
+  /// URL 格式: http://127.0.0.1:9876/{pixiv-host}/{path}?{query}
+  static (String, String, String)? _parse(HttpRequest request) {
+    final segments = request.uri.pathSegments;
+    if (segments.isEmpty) return null;
+
+    final first = segments.first;
+    if (!first.endsWith('.pixiv.net')) return null;
+
+    final remainingPath = segments.length > 1
+        ? '/${segments.skip(1).join('/')}'
+        : '/';
+    final query = request.uri.hasQuery ? request.uri.query : '';
+    return (first, remainingPath, query);
   }
 
   /// 构造供 WebView 加载的代理 URL
   static String proxyUrl(String originalUrl) {
     final uri = Uri.parse(originalUrl);
-    final host = uri.host;
     final path = '${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
-    return 'http://127.0.0.1:$port/__host=$host$path';
+    return 'http://127.0.0.1:$port/${uri.host}$path';
   }
 }
