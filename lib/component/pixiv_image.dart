@@ -96,6 +96,17 @@ class PixivImage extends StatefulWidget {
     dio.httpClientAdapter = ConversionLayerAdapter(client);
     _cacheDio = dio;
     DioCacheManager.initialize(dio);
+    // 预热 Worker：fire-and-forget 减少首图冷启动延迟
+    _warmUpWorker(dio);
+  }
+
+  /// 发送一个 HEAD 请求预热 Worker isolate
+  static void _warmUpWorker(Dio dio) {
+    if (userSetting.pictureSource == ImageHost) return;
+    final source = userSetting.pictureSource;
+    if (source == null || source.isEmpty) return;
+    final warmUrl = source.startsWith('http') ? source : 'https://$source';
+    dio.head(warmUrl).then((_) {}).catchError((_) {});
   }
 }
 

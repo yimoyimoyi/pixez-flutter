@@ -107,16 +107,14 @@ class _NavigationFrameworkState extends State<NavigationFramework>
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_navigatorKey.currentState?.canGoBack ?? false) ...[
-                  IconButton(
-                    icon: Icon(FluentIcons.home, size: 16),
-                    onPressed: () {
-                      _navigatorKey.currentState?.navigator
-                          .popUntil((route) => route.isFirst);
-                    },
-                  ),
-                  SizedBox(width: 4),
-                ],
+                IconButton(
+                  icon: Icon(FluentIcons.home, size: 16),
+                  onPressed: () {
+                    _navigatorKey.currentState?.navigator
+                        .popUntil((route) => route.isFirst);
+                  },
+                ),
+                SizedBox(width: 4),
                 Flexible(
                   child: _navigatorKey.currentState?.currentTitle ??
                       widget.defaultTitle,
