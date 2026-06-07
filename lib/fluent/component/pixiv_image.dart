@@ -22,6 +22,7 @@ import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
@@ -62,8 +63,11 @@ class PixivImage extends StatefulWidget {
   static Dio? _cacheDio;
 
   static Future<void> generatePixivCache() async {
+    // 独立版本：自定义图床走系统默认HTTP，直连Pixiv走兼容模式
+    final imageUseCompat = userSetting.networkMode != NetworkMode.standard &&
+                           userSetting.pictureSource == ImageHost;
     final client = await r.RhttpCompatibleClient.createSync(
-      settings: PixezNetworkSettings.forImages(userSetting.networkMode),
+      settings: imageUseCompat ? PixezNetworkSettings.compatible() : null,
     );
     final existing = _cacheDio;
     if (existing != null) {

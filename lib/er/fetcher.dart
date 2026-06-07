@@ -275,8 +275,11 @@ entryPoint(SendMessage message) async {
   await Hoster.initMap();
   Hoster.dnsQueryFetcher();
   final dio = Dio();
+  // 独立版本：自定义图床走系统默认HTTP → TLS正常，直连Pixiv走兼容模式
+  final useCompat = message.networkMode != NetworkMode.standard &&
+                     message.pictureSource == ImageHost;
   final client = await r.RhttpCompatibleClient.createSync(
-    settings: PixezNetworkSettings.forImages(message.networkMode),
+    settings: useCompat ? PixezNetworkSettings.compatible() : null,
   );
   dio.interceptors.add(
     PixivImageSourceInterceptor(
@@ -297,8 +300,11 @@ entryPoint(SendMessage message) async {
       if (isoContactBean.state == IsoTaskState.RELOAD) {
         final mode = isoContactBean.data as NetworkMode;
         currentNetworkMode = mode;
+        // 独立版本：RELOAD时自定义图床走系统默认HTTP
+        final reloadUseCompat = mode != NetworkMode.standard &&
+                                 currentPictureSource == ImageHost;
         final newClient = await r.RhttpCompatibleClient.createSync(
-          settings: PixezNetworkSettings.forImages(mode),
+          settings: reloadUseCompat ? PixezNetworkSettings.compatible() : null,
         );
         dio.httpClientAdapter = ConversionLayerAdapter(newClient);
         return;
