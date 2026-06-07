@@ -277,6 +277,12 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
               : 300,
           leading: CommonBackArea(),
           actions: <Widget>[
+            IconButton(
+              icon: Icon(Icons.home_outlined, size: 22),
+              onPressed: () => Navigator.of(context)
+                  .popUntil((route) => route.isFirst),
+              tooltip: '主页',
+            ),
             Builder(
               builder: (context) {
                 return IconButton(

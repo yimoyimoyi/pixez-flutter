@@ -215,6 +215,12 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
       ),
       backgroundColor: Colors.transparent,
       actions: <Widget>[
+        IconButton(
+          icon: Icon(Icons.home_outlined, size: 22),
+          onPressed: () => Navigator.of(context)
+              .popUntil((route) => route.isFirst),
+          tooltip: '主页',
+        ),
         NovelBookmarkButton(novel: _novelStore.novel!),
         IconButton(
           onPressed: () {

@@ -376,20 +376,8 @@ class Leader {
         forceSkipWrap: forceSkipWrap,
       );
     }
-    return Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          body: widget,
-          floatingActionButton: FloatingActionButton.small(
-            heroTag: 'home_${widget.hashCode}',
-            onPressed: () => pushUntilHome(context),
-            tooltip: '主页',
-            child: Icon(Icons.home_outlined, size: 20),
-          ),
-          floatingActionButtonLocation:
-              FloatingActionButtonLocation.startTop,
-        ),
-      ),
-    );
+    return Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => Scaffold(body: widget)));
   }
 }
