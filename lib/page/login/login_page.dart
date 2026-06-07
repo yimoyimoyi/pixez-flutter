@@ -21,14 +21,12 @@ import 'package:flutter/material.dart';
 import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/about_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
 import 'package:pixez/page/login/token_page.dart';
 import 'package:pixez/page/webview/webview_page.dart';
-import 'package:pixez/er/pixiv_image_source.dart';
-import 'package:pixez/weiss_plugin.dart';
+import 'package:pixez/er/login_proxy.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class LoginPage extends StatefulWidget {
@@ -163,42 +161,40 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   _launch(String originalUrl) async {
-    // 自定义图床时，将 Pixiv 登录 URL 也走代理
-    final url = PixivImageSource.resolvePixivUrl(
-      originalUrl,
-      networkMode: userSetting.networkMode,
-      pictureSource: userSetting.pictureSource,
-    );
-    // iOS 始终使用 WebView（SFSafariViewController 不支持 custom tab）
+    // iOS 始终使用 WebView
     if (Platform.isIOS) {
-      final result = await Leader.push(context, WebViewPage(url: url));
+      final result = await Leader.push(context, WebViewPage(url: originalUrl));
       if (result == "OK") {
         Leader.pushUntilHome(context);
       }
       return;
     }
-    // macOS 使用系统浏览器
+    // macOS 使用系统浏览器 + compat 直连
     if (Platform.isMacOS) {
       try {
-        CustomTabPlugin.launch(url);
+        CustomTabPlugin.launch(originalUrl);
       } catch (e) {
         BotToast.showText(text: e.toString());
       }
       return;
     }
-    // Android: 优先使用外部浏览器（深链接 pixiv:// 回调自动返回 App）
-    // WeissPlugin 的 Go 原生代码已过时，WebView 作为备用
+
+    // Android: 启动本地反向代理 → WebView 通过 compat 直连 Pixiv
+    // 登录不走 Cloudflare Worker（Worker IP 被 Pixiv 封锁 → 403）
+    // 也不走外部浏览器（浏览器 TLS 栈不支持 sni:false）
     try {
-      await CustomTabPlugin.launch(url);
+      await LoginProxy.start();
+      final proxyUrl = LoginProxy.proxyUrl(originalUrl);
+      final result = await Leader.push(context, WebViewPage(url: proxyUrl));
+      await LoginProxy.stop();
+      if (result == "OK") {
+        Leader.pushUntilHome(context);
+      }
     } catch (e) {
-      // 外部浏览器不可用，回退到 WebView（尝试 Weiss 代理）
-      BotToast.showText(text: I18n.of(context).login);
+      await LoginProxy.stop();
+      // 回退到外部浏览器
       try {
-        if (userSetting.networkMode.usesCompatibleConnection) {
-          await WeissPlugin.start();
-          await WeissPlugin.proxy();
-        }
-        Leader.push(context, WebViewPage(url: url));
+        await CustomTabPlugin.launch(originalUrl);
       } catch (e2) {
         BotToast.showText(text: e2.toString());
       }
