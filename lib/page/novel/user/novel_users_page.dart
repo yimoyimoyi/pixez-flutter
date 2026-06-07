@@ -122,6 +122,12 @@ class _NovelUsersPageState extends State<NovelUsersPage>
           forceElevated: innerBoxIsScrolled ?? false,
           expandedHeight: 280,
           actions: <Widget>[
+            IconButton(
+              icon: Icon(Icons.home_outlined, size: 22),
+              onPressed: () => Navigator.of(context)
+                  .popUntil((route) => route.isFirst),
+              tooltip: '主页',
+            ),
             Builder(
               builder: (context) {
                 return IconButton(

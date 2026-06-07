@@ -145,6 +145,14 @@ class _IllustRowPageState extends State<IllustRowPage>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               CommonBackArea(),
+              IconButton(
+                icon: Icon(Icons.home_outlined, size: 22),
+                onPressed: () => Navigator.of(context)
+                    .popUntil((route) => route.isFirst),
+                tooltip: '主页',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+              ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

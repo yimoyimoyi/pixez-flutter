@@ -138,6 +138,12 @@ class NovelSeriesPage extends HookConsumerWidget {
           ]
         ]),
         actions: [
+          IconButton(
+            icon: Icon(Icons.home_outlined, size: 22),
+            onPressed: () => Navigator.of(context)
+                .popUntil((route) => route.isFirst),
+            tooltip: '主页',
+          ),
           Builder(builder: (context) {
             return IconButton(
                 onPressed: () {
