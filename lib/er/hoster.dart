@@ -19,16 +19,19 @@ class Hoster {
     "doh": "https://77.88.8.1/dns-query", // Yandex DNS (主)
   };
 
-  /// DoH 备用服务器列表（参考 weiss 2026 update）
+  /// DoH 备用服务器列表（当前环境可用：Yandex + switch.ch）
   static const _fallbackDohServers = [
     "https://77.88.8.8/dns-query", // Yandex DNS (备)
     "https://130.59.31.248/dns-query", // switch.ch DNS
     "https://130.59.31.251/dns-query", // switch.ch DNS (备)
-    "https://119.29.29.29/dns-query", // Tencent DNS (Pixiv-Nginx)
   ];
 
-  /// Pixiv API 源站 IP 池（参考 Pixiv-Nginx www-pixiv-net upstream）
+  /// Pixiv API 源站 IP 池（当前环境 TCP 443 可用）
   static const _apiIpPool = [
+    '210.140.139.137',
+    '210.140.139.138',
+    '210.140.139.149',
+    '210.140.139.150',
     '210.140.139.154',
     '210.140.139.155',
     '210.140.139.156',
@@ -40,22 +43,18 @@ class Hoster {
     '210.140.139.162',
   ];
 
-  /// Pixiv 图片源站 IP 池（参考 Pixiv-Nginx i-pximg-net upstream）
+  /// Pixiv 图片源站 IP 池（当前环境 TCP 443 可用；210.140.92.* 已超时移除）
   static const _imageIpPool = [
-    '210.140.92.141',
-    '210.140.92.142',
-    '210.140.92.143',
-    '210.140.92.144',
-    '210.140.92.145',
-    '210.140.92.146',
-    '210.140.92.148',
-    '210.140.92.149',
     '210.140.139.131',
     '210.140.139.132',
     '210.140.139.133',
     '210.140.139.134',
     '210.140.139.135',
     '210.140.139.136',
+    '210.140.139.137',
+    '210.140.139.138',
+    '210.140.139.149',
+    '210.140.139.150',
   ];
   static Map<String, dynamic> hardMap() {
     return _map.isEmpty ? _constMap : _map;
@@ -74,7 +73,7 @@ class Hoster {
     'oauth.secure.pixiv.net',
   ];
 
-  static Dio httpClient = Dio(BaseOptions(baseUrl: 'https://1.1.1.1'));
+  static Dio httpClient = Dio(BaseOptions(baseUrl: 'https://77.88.8.1'));
   static r.RhttpCompatibleClient? compatibleClient;
 
   static Future<Dio> createDioClient() async {
