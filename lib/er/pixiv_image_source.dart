@@ -5,6 +5,30 @@ class PixivImageSource {
   static const String imageHost = 'i.pximg.net';
   static const String imageSHost = 's.pximg.net';
 
+  /// 代理任意 Pixiv 域名 URL（登录、OAuth 等非图片请求）
+  /// 当用户设置了自定义 pictureSource 时，将 Pixiv URL 改写为走代理
+  static String resolvePixivUrl(
+    String url, {
+    required NetworkMode networkMode,
+    required String? pictureSource,
+  }) {
+    try {
+      final uri = Uri.parse(url);
+      // 只有自定义图床 + 非标准模式才改写
+      if (!networkMode.allowsImageSource) return url;
+      final source = pictureSource?.trim();
+      if (source == null || source.isEmpty || source == imageHost) return url;
+      // 已经走代理的不再改写
+      final sourceHost = Uri.parse(
+        source.contains('://') ? source : 'https://$source',
+      ).host;
+      if (uri.host == sourceHost) return url;
+      return _withSource(uri, source).toString();
+    } catch (e) {
+      return url;
+    }
+  }
+
   static String resolve(
     String url, {
     required NetworkMode networkMode,

@@ -22,6 +22,7 @@ import 'package:pixez/fluent/page/login/token_page.dart';
 import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/weiss_plugin.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
@@ -164,7 +165,13 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  _launch(url) async {
+  _launch(String originalUrl) async {
+    // 自定义图床时，将 Pixiv 登录 URL 也走代理
+    final url = PixivImageSource.resolvePixivUrl(
+      originalUrl,
+      networkMode: userSetting.networkMode,
+      pictureSource: userSetting.pictureSource,
+    );
     // 优先使用外部浏览器（深链接回调自动返回 App）
     // WeissPlugin Go 原生代码已过时，WebView 作为备用
     try {

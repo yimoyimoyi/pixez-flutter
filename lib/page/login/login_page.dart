@@ -27,6 +27,7 @@ import 'package:pixez/page/about/about_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
 import 'package:pixez/page/login/token_page.dart';
 import 'package:pixez/page/webview/webview_page.dart';
+import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/weiss_plugin.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -161,7 +162,13 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  _launch(url) async {
+  _launch(String originalUrl) async {
+    // 自定义图床时，将 Pixiv 登录 URL 也走代理
+    final url = PixivImageSource.resolvePixivUrl(
+      originalUrl,
+      networkMode: userSetting.networkMode,
+      pictureSource: userSetting.pictureSource,
+    );
     // iOS 始终使用 WebView（SFSafariViewController 不支持 custom tab）
     if (Platform.isIOS) {
       final result = await Leader.push(context, WebViewPage(url: url));
