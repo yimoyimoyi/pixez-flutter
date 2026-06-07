@@ -51,13 +51,28 @@ class PixivImageSource {
     required String? pictureSource,
   }) {
     if (!networkMode.allowsImageSource) return uri;
-    if (uri.host != imageHost && uri.host != imageSHost) return uri;
+    // 匹配所有 Pixiv 图片域名（i.pximg.net / s.pximg.net / *.pximg.net 等）
+    if (!_isPixivImageHost(uri.host)) return uri;
 
     final source = pictureSource?.trim();
     if (source == null || source.isEmpty) return uri;
     if (source == imageHost) return uri;
 
     return _withSource(uri, source);
+  }
+
+  /// 判断是否为 Pixiv 图片域名（包括 pixivision CDN、各种 pximg 子域名）
+  static bool _isPixivImageHost(String host) {
+    // 官方图片 CDN
+    if (host == imageHost || host == imageSHost) return true;
+    // 所有 pximg 子域名（如 global.pximg.net, embed.pximg.net）
+    if (host.endsWith('.pximg.net')) return true;
+    // pixiv 子域名中的图片相关（排除 API/OAuth/账户域名）
+    if (host.endsWith('.pixiv.net') &&
+        host != 'app-api.pixiv.net' &&
+        host != 'oauth.secure.pixiv.net' &&
+        host != 'accounts.pixiv.net') return true;
+    return false;
   }
 
   static Uri _withSource(Uri uri, String source) {
