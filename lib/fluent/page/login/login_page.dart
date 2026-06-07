@@ -21,8 +21,9 @@ import 'package:pixez/er/leader.dart';
 import 'package:pixez/fluent/page/login/token_page.dart';
 import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/er/login_proxy.dart';
+import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
+import 'package:pixez/weiss_plugin.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -129,14 +130,15 @@ class _LoginPageState extends State<LoginPage> {
                           child: Text(I18n.of(context).dont_have_account),
                         ),
                         SizedBox(height: 4),
-                        OutlinedButton(
+                        // Token 登录 — rhttp compat 直连，100% 可靠
+                        Button(
+                          child: Text("Token"),
                           onPressed: () async {
                             await showDialog(
                               context: context,
                               builder: (context) => TokenPage(),
                             );
                           },
-                          child: Text("Token"),
                         ),
                         SizedBox(height: 4),
                         HyperlinkButton(
@@ -163,26 +165,24 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  _launch(String originalUrl) async {
-    // 启动本地反向代理 → WebView 通过 compat 直连 Pixiv
-    // 登录不走 Cloudflare Worker（Worker IP 被 Pixiv 封锁 → 403）
+  _launch(String url) async {
+    // 优先外部浏览器（利用系统代理/VPN）
+    // 失败则回退 WebView + Weiss 本地代理
     try {
-      await LoginProxy.start();
-      final proxyUrl = LoginProxy.proxyUrl(originalUrl);
-      final result = await Leader.push(
-        context,
-        WebViewPage(url: proxyUrl),
-        icon: Icon(FluentIcons.signin),
-        title: Text(I18n.of(context).login),
-      );
-      await LoginProxy.stop();
-      if (result == "OK") {
-        Leader.pushUntilHome(context);
-      }
+      await CustomTabPlugin.launch(url);
     } catch (e) {
-      await LoginProxy.stop();
+      BotToast.showText(text: I18n.of(context).login);
       try {
-        CustomTabPlugin.launch(originalUrl);
+        if (userSetting.networkMode.usesCompatibleConnection) {
+          await WeissPlugin.start();
+          await WeissPlugin.proxy();
+        }
+        Leader.push(
+          context,
+          WebViewPage(url: url),
+          icon: Icon(FluentIcons.signin),
+          title: Text(I18n.of(context).login),
+        );
       } catch (e2) {
         BotToast.showText(text: e2.toString());
       }

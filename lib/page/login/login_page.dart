@@ -21,12 +21,13 @@ import 'package:flutter/material.dart';
 import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
+import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/about_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
 import 'package:pixez/page/login/token_page.dart';
 import 'package:pixez/page/webview/webview_page.dart';
-import 'package:pixez/er/login_proxy.dart';
+import 'package:pixez/weiss_plugin.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class LoginPage extends StatefulWidget {
@@ -129,11 +130,17 @@ class _LoginPageState extends State<LoginPage> {
                           child: Text(I18n.of(context).dont_have_account),
                         ),
                         SizedBox(height: 4),
-                        OutlinedButton(
+                        // Token 登录 — 100% 可靠：通过 rhttp compat 直连换取 token
+                        ElevatedButton.icon(
+                          icon: Icon(Icons.vpn_key_outlined, size: 16),
+                          label: Text("Token"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.secondaryContainer,
+                          ),
                           onPressed: () async {
                             Leader.push(context, TokenPage());
                           },
-                          child: Text("Token"),
                         ),
                         SizedBox(height: 4),
                         TextButton(
@@ -160,41 +167,34 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  _launch(String originalUrl) async {
-    // iOS 始终使用 WebView
+  _launch(String url) async {
+    // iOS: 使用 WebView
     if (Platform.isIOS) {
-      final result = await Leader.push(context, WebViewPage(url: originalUrl));
-      if (result == "OK") {
-        Leader.pushUntilHome(context);
-      }
+      final result = await Leader.push(context, WebViewPage(url: url));
+      if (result == "OK") Leader.pushUntilHome(context);
       return;
     }
-    // macOS 使用系统浏览器 + compat 直连
+    // macOS: 使用系统浏览器
     if (Platform.isMacOS) {
       try {
-        CustomTabPlugin.launch(originalUrl);
+        CustomTabPlugin.launch(url);
       } catch (e) {
         BotToast.showText(text: e.toString());
       }
       return;
     }
-
-    // Android: 启动本地反向代理 → WebView 通过 compat 直连 Pixiv
-    // 登录不走 Cloudflare Worker（Worker IP 被 Pixiv 封锁 → 403）
-    // 也不走外部浏览器（浏览器 TLS 栈不支持 sni:false）
+    // Android: 优先外部浏览器（利用系统代理/VPN）
+    // 失败则回退 WebView + Weiss 本地代理
     try {
-      await LoginProxy.start();
-      final proxyUrl = LoginProxy.proxyUrl(originalUrl);
-      final result = await Leader.push(context, WebViewPage(url: proxyUrl));
-      await LoginProxy.stop();
-      if (result == "OK") {
-        Leader.pushUntilHome(context);
-      }
+      await CustomTabPlugin.launch(url);
     } catch (e) {
-      await LoginProxy.stop();
-      // 回退到外部浏览器
+      BotToast.showText(text: I18n.of(context).login);
       try {
-        await CustomTabPlugin.launch(originalUrl);
+        if (userSetting.networkMode.usesCompatibleConnection) {
+          await WeissPlugin.start();
+          await WeissPlugin.proxy();
+        }
+        Leader.push(context, WebViewPage(url: url));
       } catch (e2) {
         BotToast.showText(text: e2.toString());
       }
