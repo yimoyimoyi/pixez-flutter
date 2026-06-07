@@ -7,19 +7,18 @@
 
 使用 Flutter 编写的 pixiv 第三方客户端。
 
-同样支持中国大陆地区直连。
+本分支为独立定制版，主要改进：自定义图床下载修复、IP/DoH 实测优化、Token 直登、图片/下载重试。
 
-🎵 Mili - In Hell We Live, Lament 🎵 
+基于 [Notsfsssf/pixez-flutter](https://github.com/Notsfsssf/pixez-flutter) 修改，包名 `com.perol.pixez.custom`，与原版共存。
 
 # 下载
 
-推荐渠道顺序为从左到右。
+| 渠道 | 链接 |
+|---|---|
+| 原版 | [Google Play](https://play.google.com/store/apps/details?id=com.perol.play.pixez) · [GitHub Releases](https://github.com/Notsfsssf/pixez-flutter/releases) |
+| 独立版 APK | `build/app/outputs/flutter-apk/app-release.apk` |
 
-|系统|应用市场|GitHub|云盘|
-|:---:|:---:|:---:|:---:|
-|Android|[Google Play](https://play.google.com/store/apps/details?id=com.perol.play.pixez)|[Release](https://github.com/Notsfsssf/pixez-flutter/releases/latest)|[蓝奏云](https://wwa.lanzoui.com/b0ded45id)<br />**临时，不推荐**|
-|iOS|[App Store(美区)](https://apps.apple.com/us/app/pixez/id1494435126)|[Action Ipa](https://github.com/Notsfsssf/pixez-flutter/actions/workflows/build_ios.yml)|/|
-|Windows|/|[Nightly MSIX](https://github.com/Notsfsssf/pixez-flutter/actions/workflows/build_windows.yml)|/|
+> 独立版可与原版同时安装，支持自定义图床（Cloudflare Workers）下载，详情见 [RELEASE.md](RELEASE.md)。
 
 # 预览
 
