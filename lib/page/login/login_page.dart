@@ -22,6 +22,7 @@ import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/account.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/about_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
@@ -38,6 +39,8 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   TextEditingController userNameController = TextEditingController();
   TextEditingController passWordController = TextEditingController();
+  bool _loading = false;
+  String _error = '';
 
   @override
   void initState() {
@@ -49,6 +52,43 @@ class _LoginPageState extends State<LoginPage> {
     userNameController.dispose();
     passWordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _doPasswordLogin() async {
+    if (userNameController.text.isEmpty || passWordController.text.isEmpty) return;
+    setState(() { _loading = true; _error = ''; });
+    try {
+      final resp = await oAuthClient.postAuthToken(
+        userNameController.text.trim(),
+        passWordController.text.trim(),
+      );
+      final accountResp =
+          Account.fromJson(resp.data).response;
+      final user = accountResp.user;
+      final provider = AccountProvider();
+      await provider.open();
+      await provider.deleteByUserId(user.id);
+      await provider.insert(AccountPersist(
+        userId: user.id,
+        userImage: user.profileImageUrls.px170x170,
+        accessToken: accountResp.accessToken,
+        refreshToken: accountResp.refreshToken,
+        deviceToken: "",
+        passWord: passWordController.text.trim(),
+        name: user.name,
+        account: user.account,
+        mailAddress: user.mailAddress,
+        isPremium: user.isPremium ? 1 : 0,
+        xRestrict: user.xRestrict,
+        isMailAuthorized: user.isMailAuthorized ? 1 : 0,
+      ));
+      await accountStore.fetch();
+      if (mounted) Leader.pushUntilHome(context);
+    } catch (e) {
+      setState(() { _error = e.toString(); });
+    } finally {
+      setState(() { _loading = false; });
+    }
   }
 
   @override
@@ -130,14 +170,54 @@ class _LoginPageState extends State<LoginPage> {
                           child: Text(I18n.of(context).dont_have_account),
                         ),
                         SizedBox(height: 4),
-                        // Token 登录 — 100% 可靠：通过 rhttp compat 直连换取 token
-                        ElevatedButton.icon(
+                        // 用户名密码直登 — rhttp compat 直连，无需浏览器
+                        TextField(
+                          controller: userNameController,
+                          decoration: InputDecoration(
+                            prefixIcon: Icon(Icons.person_outline),
+                            hintText: 'Pixiv ID / Email',
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: TextInputType.emailAddress,
+                        ),
+                        SizedBox(height: 8),
+                        TextField(
+                          controller: passWordController,
+                          decoration: InputDecoration(
+                            prefixIcon: Icon(Icons.lock_outline),
+                            hintText: 'Password',
+                            border: OutlineInputBorder(),
+                          ),
+                          obscureText: true,
+                        ),
+                        SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            icon: _loading
+                                ? SizedBox(width: 16, height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                : Icon(Icons.login, size: 16),
+                            label: Text(_loading ? '...' : '直连登录'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                            ),
+                            onPressed: _loading ? null : _doPasswordLogin,
+                          ),
+                        ),
+                        if (_error.isNotEmpty)
+                          Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text(_error, style: TextStyle(color: Colors.red, fontSize: 12)),
+                          ),
+                        SizedBox(height: 12),
+                        Divider(),
+                        SizedBox(height: 4),
+                        // Token 备用
+                        OutlinedButton.icon(
                           icon: Icon(Icons.vpn_key_outlined, size: 16),
                           label: Text("Token"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Theme.of(context).colorScheme.secondaryContainer,
-                          ),
                           onPressed: () async {
                             Leader.push(context, TokenPage());
                           },
