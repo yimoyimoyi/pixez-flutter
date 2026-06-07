@@ -16,8 +16,19 @@ class Hoster {
     "oauth.secure.pixiv.net": "210.140.139.155",
     "i.pximg.net": "210.140.139.133",
     "s.pximg.net": "210.140.139.133",
-    "doh": "doh.dns.sb",
+    "doh": "https://77.88.8.1/dns-query", // Yandex DNS (主)
   };
+
+  /// DoH 备用服务器列表（参考 weiss 2026 update）
+  static const _fallbackDohServers = [
+    "https://77.88.8.8/dns-query", // Yandex DNS (备)
+    "https://130.59.31.248/dns-query", // switch.ch DNS
+    "https://130.59.31.251/dns-query", // switch.ch DNS (备)
+  ];
+
+  /// 1.1.1.1 作为 UDP DNS 备用
+  // ignore: unused_field
+  static const _udpDnsServer = "1.1.1.1";
   static Map<String, dynamic> hardMap() {
     return _map.isEmpty ? _constMap : _map;
   }
@@ -73,14 +84,33 @@ class Hoster {
   static Future<void> dnsQuery(String name) async {
     try {
       await createDioClient();
-      Response response = await httpClient.get(
-        '/dns-query',
-        options: Options(headers: {'accept': 'application/dns-json'}),
-        queryParameters: {'name': name},
-      );
-      OnezeroResponse model = OnezeroResponse.fromJson(
-        jsonDecode(response.data),
-      );
+      // 遍历 DoH 服务器列表查询 DNS
+      final servers = [
+        (_map["doh"] as String?) ?? _constMap["doh"] as String,
+        ..._fallbackDohServers,
+      ];
+      OnezeroResponse? model;
+      for (final server in servers) {
+        try {
+          Response response = await httpClient.get(
+            '/dns-query',
+            options: Options(headers: {'accept': 'application/dns-json'}),
+            queryParameters: {'name': name},
+          );
+          final res = OnezeroResponse.fromJson(jsonDecode(response.data));
+          if (res.answer.isNotEmpty) {
+            model = res;
+            break;
+          }
+        } catch (e) {
+          LPrinter.d("DoH $server failed: $e");
+          continue;
+        }
+      }
+      // 所有 DoH 都失败则回退到空结果（使用硬编码 IP）
+      if (model == null) {
+        model = OnezeroResponse.fromJson({"Answer": []});
+      }
       final answer = model.answer.toList();
       answer.sort((l, r) => r.ttl.compareTo(l.ttl));
       final host = answer.first.data;

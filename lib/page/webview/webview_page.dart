@@ -53,7 +53,11 @@ javascript:(function() {
 """);
             }
           },
-          onWebResourceError: (WebResourceError error) {},
+          onWebResourceError: (WebResourceError error) {
+            if (error.isForMainFrame == true) {
+              BotToast.showText(text: "network error: ${error.description}");
+            }
+          },
           onNavigationRequest: (NavigationRequest request) {
             var uri = Uri.parse(request.url);
             if (uri.scheme == "pixiv") {

@@ -23,6 +23,7 @@ import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
+import 'package:pixez/weiss_plugin.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -165,15 +166,23 @@ class _LoginPageState extends State<LoginPage> {
 
   _launch(url) async {
     if (userSetting.networkMode.usesCompatibleConnection) {
-      // await WeissServer.listener();
-      // await WeissPlugin.start();
-      // await WeissPlugin.proxy();
-      Leader.push(
-        context,
-        WebViewPage(url: url),
-        icon: Icon(FluentIcons.signin),
-        title: Text(I18n.of(context).login),
-      );
+      try {
+        await WeissPlugin.start();
+        await WeissPlugin.proxy();
+        Leader.push(
+          context,
+          WebViewPage(url: url),
+          icon: Icon(FluentIcons.signin),
+          title: Text(I18n.of(context).login),
+        );
+      } catch (e) {
+        // Weiss 代理启动失败，回退到外部浏览器
+        try {
+          CustomTabPlugin.launch(url);
+        } catch (e2) {
+          BotToast.showText(text: e2.toString());
+        }
+      }
     } else {
       try {
         CustomTabPlugin.launch(url);

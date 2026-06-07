@@ -178,10 +178,19 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     if (userSetting.networkMode.usesCompatibleConnection) {
-      // await WeissServer.listener();
-      await WeissPlugin.start();
-      await WeissPlugin.proxy();
-      Leader.push(context, WebViewPage(url: url));
+      try {
+        await WeissPlugin.start();
+        await WeissPlugin.proxy();
+        Leader.push(context, WebViewPage(url: url));
+      } catch (e) {
+        // Weiss 代理启动失败，回退到外部浏览器登录
+        BotToast.showText(text: I18n.of(context).login);
+        try {
+          await CustomTabPlugin.launch(url);
+        } catch (e2) {
+          BotToast.showText(text: e2.toString());
+        }
+      }
     } else {
       try {
         CustomTabPlugin.launch(url);
