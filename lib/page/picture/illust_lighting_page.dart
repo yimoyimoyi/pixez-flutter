@@ -215,13 +215,15 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              CommonBackArea(),
-              IconButton(
-                icon: Icon(Icons.home_outlined, size: 22),
-                onPressed: () => Navigator.of(context)
-                    .popUntil((route) => route.isFirst),
-                tooltip: '主页',
-              ),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                CommonBackArea(),
+                IconButton(
+                  icon: Icon(Icons.home_outlined, size: 22),
+                  onPressed: () => Navigator.of(context)
+                      .popUntil((route) => route.isFirst),
+                  tooltip: '主页',
+                ),
+              ]),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
