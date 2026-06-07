@@ -165,29 +165,25 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   _launch(url) async {
-    if (userSetting.networkMode.usesCompatibleConnection) {
+    // 优先使用外部浏览器（深链接回调自动返回 App）
+    // WeissPlugin Go 原生代码已过时，WebView 作为备用
+    try {
+      CustomTabPlugin.launch(url);
+    } catch (e) {
+      // 外部浏览器不可用，回退到 WebView（尝试 Weiss 代理）
       try {
-        await WeissPlugin.start();
-        await WeissPlugin.proxy();
+        if (userSetting.networkMode.usesCompatibleConnection) {
+          await WeissPlugin.start();
+          await WeissPlugin.proxy();
+        }
         Leader.push(
           context,
           WebViewPage(url: url),
           icon: Icon(FluentIcons.signin),
           title: Text(I18n.of(context).login),
         );
-      } catch (e) {
-        // Weiss 代理启动失败，回退到外部浏览器
-        try {
-          CustomTabPlugin.launch(url);
-        } catch (e2) {
-          BotToast.showText(text: e2.toString());
-        }
-      }
-    } else {
-      try {
-        CustomTabPlugin.launch(url);
-      } catch (e) {
-        BotToast.showText(text: e.toString());
+      } catch (e2) {
+        BotToast.showText(text: e2.toString());
       }
     }
   }

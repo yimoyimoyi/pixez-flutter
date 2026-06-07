@@ -162,6 +162,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   _launch(url) async {
+    // iOS 始终使用 WebView（SFSafariViewController 不支持 custom tab）
     if (Platform.isIOS) {
       final result = await Leader.push(context, WebViewPage(url: url));
       if (result == "OK") {
@@ -169,6 +170,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       return;
     }
+    // macOS 使用系统浏览器
     if (Platform.isMacOS) {
       try {
         CustomTabPlugin.launch(url);
@@ -177,25 +179,21 @@ class _LoginPageState extends State<LoginPage> {
       }
       return;
     }
-    if (userSetting.networkMode.usesCompatibleConnection) {
+    // Android: 优先使用外部浏览器（深链接 pixiv:// 回调自动返回 App）
+    // WeissPlugin 的 Go 原生代码已过时，WebView 作为备用
+    try {
+      await CustomTabPlugin.launch(url);
+    } catch (e) {
+      // 外部浏览器不可用，回退到 WebView（尝试 Weiss 代理）
+      BotToast.showText(text: I18n.of(context).login);
       try {
-        await WeissPlugin.start();
-        await WeissPlugin.proxy();
-        Leader.push(context, WebViewPage(url: url));
-      } catch (e) {
-        // Weiss 代理启动失败，回退到外部浏览器登录
-        BotToast.showText(text: I18n.of(context).login);
-        try {
-          await CustomTabPlugin.launch(url);
-        } catch (e2) {
-          BotToast.showText(text: e2.toString());
+        if (userSetting.networkMode.usesCompatibleConnection) {
+          await WeissPlugin.start();
+          await WeissPlugin.proxy();
         }
-      }
-    } else {
-      try {
-        CustomTabPlugin.launch(url);
-      } catch (e) {
-        BotToast.showText(text: e.toString());
+        Leader.push(context, WebViewPage(url: url));
+      } catch (e2) {
+        BotToast.showText(text: e2.toString());
       }
     }
   }
