@@ -56,6 +56,7 @@ class PixivImage extends StatefulWidget {
   final double? width;
   final String? host;
   final PixEzCacheHeaderData? cacheHeaderData;
+  final String? errorHint; // 加载失败时显示的元信息（如标题/页码）
 
   PixivImage(
     this.url, {
@@ -67,6 +68,7 @@ class PixivImage extends StatefulWidget {
     this.host,
     this.width,
     this.cacheHeaderData,
+    this.errorHint,
   });
 
   @override
@@ -205,15 +207,32 @@ class _PixivImageState extends State<PixivImage> {
           widget.placeWidget ?? Container(height: height),
       errorWidget: (context, url, error) {
         _scheduleRetry();
+        // 从 URL 提取文件名作为上下文提示
+        final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
+            ? Uri.parse(url).pathSegments.last
+            : '';
+        final hint = widget.errorHint ?? fileName;
         return Container(
           height: height,
           child: Center(
-            child: TextButton(
-              onPressed: () {
-                _retryCount = 0;
-                setState(() {});
-              },
-              child: Text(":("),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (hint.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 4),
+                    child: Text(hint,
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                  ),
+                TextButton(
+                  onPressed: () {
+                    _retryCount = 0;
+                    setState(() {});
+                  },
+                  child: Text(":("),
+                ),
+              ],
             ),
           ),
         );

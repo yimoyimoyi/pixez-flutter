@@ -45,6 +45,7 @@ class PixivImage extends StatefulWidget {
   final double? height;
   final double? width;
   final String? host;
+  final String? errorHint;
 
   PixivImage(
     this.url, {
@@ -55,6 +56,7 @@ class PixivImage extends StatefulWidget {
     this.height,
     this.host,
     this.width,
+    this.errorHint,
   });
 
   @override
@@ -155,15 +157,31 @@ class _PixivImageState extends State<PixivImage> {
           widget.placeWidget ?? Container(height: height),
       errorWidget: (context, url, error) {
         _scheduleRetry();
+        final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
+            ? Uri.parse(url).pathSegments.last
+            : '';
+        final hint = widget.errorHint ?? fileName;
         return Container(
           height: height,
           child: Center(
-            child: HyperlinkButton(
-              onPressed: () {
-                _retryCount = 0;
-                setState(() {});
-              },
-              child: Text(":("),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (hint.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 4),
+                    child: Text(hint,
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                  ),
+                HyperlinkButton(
+                  onPressed: () {
+                    _retryCount = 0;
+                    setState(() {});
+                  },
+                  child: Text(":("),
+                ),
+              ],
             ),
           ),
         );

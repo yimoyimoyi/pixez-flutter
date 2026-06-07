@@ -18,7 +18,6 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:html/parser.dart';
-import 'package:dio/dio.dart';
 import 'package:mobx/mobx.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
@@ -77,19 +76,29 @@ abstract class _NovelStoreBase with Store {
     errorMessage = null;
     try {
       bookedOffset = 0.0;
+      // 1) 先取元数据（轻量 API，高成功率）
+      if (novel == null) {
+        try {
+          final detailResp = await apiClient.getNovelDetail(id);
+          novel = Novel.fromJson(detailResp.data['novel']);
+          novelHistoryStore.insert(novel!);
+        } catch (metaErr) {
+          // 元数据失败不阻塞，正文可能仍然可用
+          print('novel metadata fetch failed: $metaErr');
+        }
+      }
+      // 2) 再取正文（HTML 解析，可能失败）
       final response = await apiClient.webviewNovel(id);
       String json = _parseHtml(response.data)!;
       novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
       spans = await compute(buildSpans, novelTextResponse!);
-      if (novel == null) {
-        Response response = await apiClient.getNovelDetail(id);
-        novel = Novel.fromJson(response.data['novel']);
-      }
-      novelHistoryStore.insert(novel!);
+      if (novel != null) novelHistoryStore.insert(novel!);
       fetchOffset();
     } catch (e) {
       print(e);
-      errorMessage = e.toString();
+      // 保留已加载的旧内容（如果有的话）
+      errorMessage = '加载失败：${e.toString().split('\n').first}'
+          '${novel != null ? '\n已保留作品信息，可重试' : ''}';
     }
   }
 
