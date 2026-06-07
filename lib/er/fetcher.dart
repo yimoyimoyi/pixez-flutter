@@ -327,35 +327,57 @@ entryPoint(SendMessage message) async {
                 taskBean.savePath! +
                 Platform.pathSeparator +
                 taskBean.fileName!;
-            await for (final response in pixivCacheManager!.getFileStream(
-              taskBean.url!,
-              headers: {
-                "referer": "https://app-api.pixiv.net/",
-                "User-Agent": "PixivIOSApp/5.8.0",
-              },
-              withProgress: true,
-            )) {
-              if (response is DownloadProgress) {
-                sendPort.send(
-                  IsoContactBean(
-                    state: IsoTaskState.PROGRESS,
-                    data: IsoProgressBean(
-                      min: response.downloaded,
-                      total: response.totalSize ?? 1,
-                      url: taskBean.url!,
-                    ),
-                  ),
-                );
-              } else if (response is FileInfo) {
-                File file = File(savePath);
-                if (!file.parent.existsSync()) {
-                  file.parent.createSync(recursive: true);
+            // 下载重试：最多 3 次，指数退避
+            const maxRetries = 3;
+            bool success = false;
+            Object? lastError;
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+              try {
+                await for (final response in pixivCacheManager!.getFileStream(
+                  taskBean.url!,
+                  headers: {
+                    "referer": "https://app-api.pixiv.net/",
+                    "User-Agent": "PixivIOSApp/5.8.0",
+                  },
+                  withProgress: true,
+                )) {
+                  if (response is DownloadProgress) {
+                    sendPort.send(
+                      IsoContactBean(
+                        state: IsoTaskState.PROGRESS,
+                        data: IsoProgressBean(
+                          min: response.downloaded,
+                          total: response.totalSize ?? 1,
+                          url: taskBean.url!,
+                        ),
+                      ),
+                    );
+                  } else if (response is FileInfo) {
+                    File file = File(savePath);
+                    if (!file.parent.existsSync()) {
+                      file.parent.createSync(recursive: true);
+                    }
+                    await response.file.copy(file.path);
+                    success = true;
+                    sendPort.send(
+                      IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean),
+                    );
+                  }
                 }
-                await response.file.copy(file.path);
-                sendPort.send(
-                  IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean),
-                );
+                if (success) break;
+              } catch (e) {
+                lastError = e;
+                LPrinter.d("fetcher attempt $attempt failed: $e");
+                if (attempt < maxRetries - 1) {
+                  await Future.delayed(Duration(seconds: 2 << attempt));
+                }
               }
+            }
+            if (!success) {
+              LPrinter.d("fetcher all retries failed: $lastError");
+              sendPort.send(
+                IsoContactBean(state: IsoTaskState.ERROR, data: taskBean),
+              );
             }
           } catch (e) {
             LPrinter.d("fetcher=======");

@@ -33,21 +33,6 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  TextEditingController userNameController = TextEditingController();
-  TextEditingController passWordController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
-  void dispose() {
-    userNameController.dispose();
-    passWordController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ScaffoldPage(
@@ -78,9 +63,7 @@ class _LoginPageState extends State<LoginPage> {
         ],
       ),
       content: Builder(
-        builder: (context) {
-          return _buildBody(context);
-        },
+        builder: (context) => _buildBody(context),
       ),
     );
   }
@@ -103,58 +86,64 @@ class _LoginPageState extends State<LoginPage> {
                 padding: EdgeInsets.only(bottom: 20),
                 child: Container(
                   padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: AutofillGroup(
-                    child: Column(
-                      children: <Widget>[
-                        SizedBox(height: 10),
-                        FilledButton(
-                          child: Text(I18n.of(context).login),
-                          onPressed: () async {
-                            try {
-                              String url =
-                                  await OAuthClient.generateWebviewUrl();
-                              _launch(url);
-                            } catch (e) {}
-                          },
-                        ),
-                        SizedBox(height: 4),
-                        FilledButton(
-                          onPressed: () async {
-                            try {
-                              String url = await OAuthClient.generateWebviewUrl(
-                                create: true,
-                              );
-                              _launch(url);
-                            } catch (e) {}
-                          },
-                          child: Text(I18n.of(context).dont_have_account),
-                        ),
-                        SizedBox(height: 4),
-                        // Token 登录 — rhttp compat 直连，100% 可靠
-                        Button(
-                          child: Text("Token"),
-                          onPressed: () async {
-                            await showDialog(
-                              context: context,
-                              builder: (context) => TokenPage(),
-                            );
-                          },
-                        ),
-                        SizedBox(height: 4),
-                        HyperlinkButton(
-                          child: Text(I18n.of(context).terms),
-                          onPressed: () async {
-                            final url =
-                                'https://www.pixiv.net/terms/?page=term';
-                            try {
-                              await _launch(url);
-                            } catch (e) {}
-                          },
-                        ),
-                      ],
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                    ),
+                  child: Column(
+                    children: <Widget>[
+                      SizedBox(height: 10),
+                      // 1) 外部浏览器
+                      Button(
+                        child: Text(I18n.of(context).login),
+                        onPressed: () async {
+                          try {
+                            final url = await OAuthClient.generateWebviewUrl();
+                            _launchExternal(url);
+                          } catch (e) {}
+                        },
+                      ),
+                      SizedBox(height: 4),
+                      Button(
+                        child: Text(I18n.of(context).dont_have_account),
+                        onPressed: () async {
+                          try {
+                            final url = await OAuthClient.generateWebviewUrl(create: true);
+                            _launchExternal(url);
+                          } catch (e) {}
+                        },
+                      ),
+                      SizedBox(height: 8),
+                      // 2) 内部 WebView
+                      Button(
+                        child: Text("内部 WebView"),
+                        onPressed: () async {
+                          try {
+                            final url = await OAuthClient.generateWebviewUrl();
+                            _launchWebView(url);
+                          } catch (e) {}
+                        },
+                      ),
+                      SizedBox(height: 8),
+                      Divider(),
+                      // 3) Token
+                      Button(
+                        child: Text("Token"),
+                        onPressed: () async {
+                          await showDialog(
+                            context: context,
+                            builder: (context) => TokenPage(),
+                          );
+                        },
+                      ),
+                      SizedBox(height: 4),
+                      HyperlinkButton(
+                        child: Text(I18n.of(context).terms),
+                        onPressed: () async {
+                          try {
+                            await _launchExternal('https://www.pixiv.net/terms/?page=term');
+                          } catch (e) {}
+                        },
+                      ),
+                    ],
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                   ),
                 ),
               ),
@@ -165,27 +154,28 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  _launch(String url) async {
-    // 优先外部浏览器（利用系统代理/VPN）
-    // 失败则回退 WebView + Weiss 本地代理
+  Future<void> _launchExternal(String url) async {
     try {
       await CustomTabPlugin.launch(url);
     } catch (e) {
-      BotToast.showText(text: I18n.of(context).login);
-      try {
-        if (userSetting.networkMode.usesCompatibleConnection) {
-          await WeissPlugin.start();
-          await WeissPlugin.proxy();
-        }
-        Leader.push(
-          context,
-          WebViewPage(url: url),
-          icon: Icon(FluentIcons.signin),
-          title: Text(I18n.of(context).login),
-        );
-      } catch (e2) {
-        BotToast.showText(text: e2.toString());
+      BotToast.showText(text: "浏览器不可用: $e");
+    }
+  }
+
+  Future<void> _launchWebView(String url) async {
+    try {
+      if (userSetting.networkMode.usesCompatibleConnection) {
+        await WeissPlugin.start();
+        await WeissPlugin.proxy();
       }
+      await Leader.push(
+        context,
+        WebViewPage(url: url),
+        icon: Icon(FluentIcons.signin),
+        title: Text(I18n.of(context).login),
+      );
+    } catch (e) {
+      BotToast.showText(text: "WebView 登录失败，请尝试外部浏览器或 Token: $e");
     }
   }
 }

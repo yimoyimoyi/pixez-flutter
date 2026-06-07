@@ -104,8 +104,25 @@ class _NavigationFrameworkState extends State<NavigationFramework>
       child: Listener(
         child: NavigationView(
           titleBar: TitleBar(
-            title:
-                _navigatorKey.currentState?.currentTitle ?? widget.defaultTitle,
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_navigatorKey.currentState?.canGoBack ?? false) ...[
+                  IconButton(
+                    icon: Icon(FluentIcons.home, size: 16),
+                    onPressed: () {
+                      Navigator.of(context, rootNavigator: true)
+                          .popUntil((route) => route.isFirst);
+                    },
+                  ),
+                  SizedBox(width: 4),
+                ],
+                Flexible(
+                  child: _navigatorKey.currentState?.currentTitle ??
+                      widget.defaultTitle,
+                ),
+              ],
+            ),
             onDragStarted: () => windowManager.startDragging(),
             onDoubleTap: () async {
               bool isMaximized = await windowManager.isMaximized();

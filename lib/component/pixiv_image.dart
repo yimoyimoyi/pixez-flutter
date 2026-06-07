@@ -145,6 +145,8 @@ class _PixivImageState extends State<PixivImage> {
   BoxFit? fit;
   bool fade = true;
   Widget? placeWidget;
+  int _retryCount = 0;
+  String? _lastKey;
 
   @override
   void initState() {
@@ -162,6 +164,7 @@ class _PixivImageState extends State<PixivImage> {
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
+      _retryCount = 0;
       setState(() {
         url = widget.url;
         width = widget.width;
@@ -170,22 +173,40 @@ class _PixivImageState extends State<PixivImage> {
     }
   }
 
+  void _scheduleRetry() {
+    if (_retryCount >= 3) return;
+    _retryCount++;
+    final delay = Duration(seconds: 2 << (_retryCount - 1));
+    final currentKey = url;
+    _lastKey = currentKey;
+    Future.delayed(delay, () {
+      if (mounted && _lastKey == currentKey) setState(() {});
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentKey = url;
+    if (_lastKey != currentKey) { _lastKey = currentKey; }
     return CachedNetworkImage(
+      key: ValueKey('$_retryCount'),
       placeholder: (context, url) =>
           widget.placeWidget ?? Container(height: height),
-      errorWidget: (context, url, _) => Container(
-        height: height,
-        child: Center(
-          child: TextButton(
-            onPressed: () {
-              setState(() {});
-            },
-            child: Text(":("),
+      errorWidget: (context, url, error) {
+        _scheduleRetry();
+        return Container(
+          height: height,
+          child: Center(
+            child: TextButton(
+              onPressed: () {
+                _retryCount = 0;
+                setState(() {});
+              },
+              child: Text(":("),
+            ),
           ),
-        ),
-      ),
+        );
+      },
       fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
       // memCacheWidth: width?.toInt(),
       // memCacheHeight: height?.toInt(),

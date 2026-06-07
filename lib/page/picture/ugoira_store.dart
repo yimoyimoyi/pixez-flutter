@@ -192,18 +192,33 @@ abstract class _UgoiraStoreBase with Store {
         if (userSetting.networkMode.usesCompatibleConnection) {
           dio.httpClientAdapter = await ApiClient.createCompatibleClient();
         }
-        dio.download(
-          sourceZipUrl,
-          fullPath,
-          onReceiveProgress: (int count, int total) {
-            this.count = count;
-            this.total = total;
-            if (count / total == 1) {
-              unZip();
+        // 下载重试：最多 3 次
+        bool downloaded = false;
+        Object? lastDownloadError;
+        for (int attempt = 0; attempt < 3; attempt++) {
+          try {
+            await dio.download(
+              sourceZipUrl,
+              fullPath,
+              onReceiveProgress: (int count, int total) {
+                this.count = count;
+                this.total = total;
+                if (count / total == 1) {
+                  unZip();
+                }
+              },
+              deleteOnError: true,
+            );
+            downloaded = true;
+            break;
+          } catch (downloadErr) {
+            lastDownloadError = downloadErr;
+            if (attempt < 2) {
+              await Future.delayed(Duration(seconds: 2 << attempt));
             }
-          },
-          deleteOnError: true,
-        );
+          }
+        }
+        if (!downloaded) throw lastDownloadError!;
       } else {
         unZip();
       }
