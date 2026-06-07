@@ -31,7 +31,8 @@ class LoginProxy {
     );
     _dio = Dio();
     _dio!.httpClientAdapter = ConversionLayerAdapter(client);
-    _dio!.options.followRedirects = false;
+    _dio!.options.followRedirects = true; // 代理侧跟随 302 重定向
+    _dio!.options.maxRedirects = 10;
     _dio!.options.validateStatus = (_) => true;
 
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
@@ -108,16 +109,24 @@ class LoginProxy {
         }
       });
 
-      // HTML 响应需要改写 URL
+      // 改写 Pixiv URL：HTML/CSS/JS 中的外链都走代理
       final contentType = respHeaders['content-type']?.firstOrNull ?? '';
-      final isHtml =
-          contentType.contains('text/html') || contentType.contains('application/xhtml');
+      final isRewritable =
+          contentType.contains('text/html') ||
+          contentType.contains('application/xhtml') ||
+          contentType.contains('text/css') ||
+          contentType.contains('application/javascript') ||
+          contentType.contains('text/javascript');
 
-      if (isHtml && response.data != null) {
-        String html = utf8.decode(response.data as List<int>);
-        html = _rewriteHtml(html);
-        request.response.headers.set('content-type', 'text/html; charset=utf-8');
-        request.response.write(html);
+      if (isRewritable && response.data != null) {
+        String body = utf8.decode(response.data as List<int>);
+        body = _rewriteUrls(body);
+        final ct = contentType.contains('text/html') ||
+                contentType.contains('xhtml')
+            ? 'text/html; charset=utf-8'
+            : contentType;
+        request.response.headers.set('content-type', ct);
+        request.response.write(body);
       } else if (response.data != null) {
         request.response.add(response.data as List<int>);
       }
@@ -153,10 +162,11 @@ class LoginProxy {
     return 'app-api.pixiv.net';
   }
 
-  /// 改写 HTML 中 Pixiv URL，确保后续请求也走本代理
-  static String _rewriteHtml(String html) {
-    // 匹配 https://<host>.pixiv.net/something
-    return html.replaceAllMapped(
+  /// 改写 HTML/CSS/JS 中 Pixiv 域名 URL，确保所有子资源也走本代理
+  static String _rewriteUrls(String content) {
+    // 匹配所有上下文中的 https://*.pixiv.net URL
+    // 包括: HTML (href, src, action), CSS (url()), JS (字符串), meta refresh
+    return content.replaceAllMapped(
       RegExp(r"https://([a-z0-9.-]+\.pixiv\.net)(\S*)", caseSensitive: false),
       (match) {
         final host = match.group(1)!;
