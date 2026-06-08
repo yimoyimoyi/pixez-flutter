@@ -17,7 +17,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/null_hero.dart';
-import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/models/amwork.dart';
@@ -119,19 +118,9 @@ class _SoupPageState extends State<SoupPage> {
               Text('正文加载失败',
                   style: TextStyle(color: Colors.grey)),
               SizedBox(height: 4),
-              Text('pixivision 启用了 Cloudflare 防护，请确认代理已开启',
+              Text('加载失败，请检查网络连接后重试',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                   textAlign: TextAlign.center),
-              SizedBox(height: 16),
-              ElevatedButton.icon(
-                icon: Icon(Icons.open_in_browser, size: 16),
-                label: Text('在浏览器中打开'),
-                onPressed: () {
-                  try {
-                    CustomTabPlugin.launch(widget.url);
-                  } catch (_) {}
-                },
-              ),
             ],
           ),
         ),
