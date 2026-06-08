@@ -44,7 +44,10 @@ class LoginProxy {
 
   /// HTTPS 代理（VpnService DNS 劫持模式，reCAPTCHA 可用）
   static Future<void> startHttps() async {
-    if (_server != null) return;
+    // 如果已有 HTTP 服务器在运行，先停止
+    if (_server != null) {
+      await stop();
+    }
 
     final client = await r.RhttpCompatibleClient.createSync(
       settings: PixezNetworkSettings.compatible(),
