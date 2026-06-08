@@ -10,23 +10,23 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import com.perol.pixez.MainActivity
-import com.perol.pixez.R
 import kotlinx.coroutines.*
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.nio.ByteBuffer
-import java.nio.channels.SocketChannel
+import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Pixiv 登录专用 VPN 服务
  *
- * 仅拦截 DNS 查询（*.pixiv.net → 虚拟 IP 10.0.0.1），
- * 并将 TCP 连接到 10.0.0.1:443 的流量 NAT 转发到本地 HTTPS 代理 127.0.0.1:8443。
- * 所有其他流量直通（通过 protected socket），不进行额外处理。
+ * DNS 劫持: *.pixiv.net → 10.0.0.1
+ * TCP 代理: 10.0.0.1:443 → 127.0.0.1:8443 (LoginProxy HTTPS)
+ * 其他流量: 直通（通过 TUN 返回）
  */
 class PixivVpnService : VpnService() {
 
@@ -35,16 +35,44 @@ class PixivVpnService : VpnService() {
         const val CHANNEL_ID = "pixiv_vpn_channel"
         const val NOTIFICATION_ID = 1001
         const val VPN_ADDRESS = "10.0.0.2"
-        const val VIRTUAL_PIXIV_IP = "10.0.0.1"
-        const val LOCAL_PROXY_PORT = 8443
+        const val VIRTUAL_IP = "10.0.0.1"
+        const val PROXY_PORT = 8443
         const val DNS_PORT = 53
+        const val TCP_PROTOCOL = 6
+        const val UDP_PROTOCOL = 17
+        const val IP_HEADER_LEN = 20
     }
+
+    // ============ 数据类 ============
+
+    /** TCP 连接会话 */
+    data class TcpSession(
+        val clientIp: Int,       // 客户端 IP（网络字节序）
+        val clientPort: Int,     // 客户端端口
+        var clientSeq: Long,     // 客户端下一个 SEQ
+        var clientAck: Long,     // 期望从客户端收到的 ACK
+        var proxySeq: Long,      // 代理侧下一个 SEQ（初始为随机 ISN）
+        var proxyAck: Long,      // 期望从代理侧收到的 ACK
+        val socket: Socket,
+        val output: OutputStream,
+        var connected: Boolean,
+        var lastActivity: Long
+    )
+
+    // ============ 状态 ============
 
     private var tunInput: FileInputStream? = null
     private var tunOutput: FileOutputStream? = null
-    private var tunInterface: ParcelFileDescriptor? = null
+    private var tunFd: ParcelFileDescriptor? = null
     private var isRunning = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val sessions = ConcurrentHashMap<String, TcpSession>()
+    private var sessionIdCounter = 0L
+
+    // 客户端 IP 标识 (srcIp:srcPort -> sessionKey)
+    private fun sessionKey(ip: Int, port: Int) = "${ip}:${port}"
+
+    // ============ 生命周期 ============
 
     override fun onCreate() {
         super.onCreate()
@@ -52,204 +80,272 @@ class PixivVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopVpn()
-            return START_NOT_STICKY
-        }
+        if (intent?.action == ACTION_STOP) { stopVpn(); return START_NOT_STICKY }
         startForeground(NOTIFICATION_ID, buildNotification())
         startVpn()
         return START_STICKY
     }
 
-    override fun onRevoke() {
-        stopVpn()
-        super.onRevoke()
-    }
-
-    override fun onDestroy() {
-        stopVpn()
-        super.onDestroy()
-    }
+    override fun onRevoke() { stopVpn(); super.onRevoke() }
+    override fun onDestroy() { stopVpn(); super.onDestroy() }
 
     private fun startVpn() {
         if (isRunning) return
-
         val builder = Builder()
-            .setSession("PixEz Login VPN")
+            .setSession("PixEz VPN")
             .addAddress(VPN_ADDRESS, 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
+            .addDnsServer("8.8.8.8")
             .setMtu(1500)
             .setBlocking(true)
-
-        // 排除本地代理流量，避免循环
-        builder.addRoute("127.0.0.1", 32)
-
-        tunInterface = builder.establish()
-        if (tunInterface == null) {
-            stopSelf()
-            return
-        }
-
-        tunInput = FileInputStream(tunInterface!!.fileDescriptor)
-        tunOutput = FileOutputStream(tunInterface!!.fileDescriptor)
+        tunFd = builder.establish() ?: run { stopSelf(); return }
+        tunInput = FileInputStream(tunFd!!.fileDescriptor)
+        tunOutput = FileOutputStream(tunFd!!.fileDescriptor)
         isRunning = true
-
-        scope.launch {
-            processPackets()
-        }
+        scope.launch { processPackets() }
+        scope.launch { cleanupSessions() }
     }
 
     private fun stopVpn() {
         isRunning = false
         scope.cancel()
+        sessions.values.forEach { try { it.socket.close() } catch (_: Exception) {} }
+        sessions.clear()
         try { tunInput?.close() } catch (_: Exception) {}
         try { tunOutput?.close() } catch (_: Exception) {}
-        try { tunInterface?.close() } catch (_: Exception) {}
-        tunInput = null
-        tunOutput = null
-        tunInterface = null
+        try { tunFd?.close() } catch (_: Exception) {}
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    /**
-     * IP 包处理循环
-     */
-    private fun processPackets() {
-        val packet = ByteArray(32767)
-        val protectedSocket = SocketChannel.open()
-        // 重置全局标志在连接失败时标记是否需要重连
+    // ============ 主处理循环 ============
 
+    private fun processPackets() {
+        val buf = ByteArray(32767)
         try {
             while (isRunning) {
-                val len = try {
-                    tunInput?.read(packet) ?: -1
-                } catch (_: Exception) {
-                    -1
-                }
+                val len = tunInput?.read(buf) ?: -1
                 if (len <= 0) continue
 
-                val ipVersion = (packet[0].toInt() shr 4) and 0x0F
-                if (ipVersion != 4) continue // 仅处理 IPv4
+                val ipHdrLen = (buf[0].toInt() and 0x0F) * 4
+                if (ipHdrLen < 20 || len < ipHdrLen) continue
 
-                val protocol = packet[9].toInt() and 0xFF
-                val srcAddr = ByteArray(4)
-                val dstAddr = ByteArray(4)
-                System.arraycopy(packet, 12, srcAddr, 0, 4)
-                System.arraycopy(packet, 16, dstAddr, 0, 4)
+                val protocol = buf[9].toInt() and 0xFF
+                val srcIp = buf.getIntAt(12)
+                val dstIp = buf.getIntAt(16)
 
                 when (protocol) {
-                    6 -> handleTcp(packet, len, srcAddr, dstAddr)          // TCP
-                    17 -> handleUdp(packet, len, srcAddr, dstAddr)          // UDP
-                    else -> forwardToTun(packet, len)                       // 直通
+                    TCP_PROTOCOL -> handleTcp(buf, len, ipHdrLen, srcIp, dstIp)
+                    UDP_PROTOCOL -> handleUdp(buf, len, ipHdrLen, srcIp, dstIp)
                 }
             }
-        } catch (_: Exception) {
-        } finally {
-            try { protectedSocket.close() } catch (_: Exception) {}
-        }
-    }
-
-    // ============ UDP 处理（DNS 劫持） ============
-
-    private fun handleUdp(packet: ByteArray, len: Int, srcAddr: ByteArray, dstAddr: ByteArray) {
-        // 仅处理发往 53 端口的 UDP（DNS 查询）
-        val dstPort = ((packet[22].toInt() and 0xFF) shl 8) or (packet[23].toInt() and 0xFF)
-        if (dstPort != DNS_PORT) {
-            forwardToTun(packet, len) // 直通非 DNS UDP
-            return
-        }
-
-        // 解析 DNS 查询
-        val dnsOffset = 28 // IP(20) + UDP(8)
-        val dnsData = packet.copyOfRange(dnsOffset, len)
-
-        val qname = parseDnsName(dnsData, 12) ?: run {
-            forwardToTun(packet, len)
-            return
-        }
-
-        // 仅劫持 Pixiv 域名
-        if (!qname.endsWith(".pixiv.net")) {
-            forwardToTun(packet, len)
-            return
-        }
-
-        // 构造 DNS 响应：返回虚拟 IP 10.0.0.1
-        val response = buildDnsResponse(packet, dnsData, qname)
-        tunOutput?.write(response)
-    }
-
-    // ============ TCP 处理（NAT 转发到本地代理） ============
-
-    private fun handleTcp(packet: ByteArray, len: Int, srcAddr: ByteArray, dstAddr: ByteArray) {
-        val dstPort = ((packet[22].toInt() and 0xFF) shl 8) or (packet[23].toInt() and 0xFF)
-
-        // 仅拦截去往虚拟 Pixiv IP 的 443 端口流量
-        val targetHost = "${dstAddr[0].toInt() and 0xFF}.${dstAddr[1].toInt() and 0xFF}.${dstAddr[2].toInt() and 0xFF}.${dstAddr[3].toInt() and 0xFF}"
-        if (targetHost != VIRTUAL_PIXIV_IP || dstPort != 443) {
-            forwardToTun(packet, len)
-            return
-        }
-
-        // SYN 标志检查
-        val flags = packet[33].toInt() and 0xFF
-
-        if (flags and 0x02 != 0) {
-            // SYN: 建立到本地代理的连接
-            try {
-                val channel = SocketChannel.open()
-                channel.configureBlocking(false)
-                channel.connect(InetSocketAddress("127.0.0.1", LOCAL_PROXY_PORT))
-                // 这里简化处理——实际需要完整的 TCP 状态机
-                // 由于复杂度，此处只做 DNS 劫持，TCP 转发依赖系统代理
-            } catch (_: Exception) {
-                // 连接失败，重置连接
-                sendRst(packet, srcAddr, dstAddr)
-            }
-        }
-
-        // 当前简化实现：TCP 包全部直通
-        // 完整实现需要 NAT 状态表 + SYN cookie + 序号转换
-        forwardToTun(packet, len)
-    }
-
-    // ============ 数据包转发 ============
-
-    private fun forwardToTun(packet: ByteArray, len: Int) {
-        try {
-            // 直通模式：通过 protected socket 发送到原始目的地
-            // 但简化实现：直接丢弃（让系统处理）
-            // 实际需要完整的 NAT 实现
         } catch (_: Exception) {}
     }
 
-    private fun sendRst(packet: ByteArray, srcAddr: ByteArray, dstAddr: ByteArray) {
-        // 交换源/目标 IP
-        val rst = ByteArray(40)
-        rst[0] = 0x45.toByte() // IPv4 + 5 words header
-        // total length = 40
-        rst[2] = ((40 shr 8) and 0xFF).toByte()
-        rst[3] = (40 and 0xFF).toByte()
-        // TTL
-        rst[8] = 64
-        // protocol = TCP
-        rst[9] = 6
-        // 交换地址
-        System.arraycopy(dstAddr, 0, rst, 12, 4)
-        System.arraycopy(srcAddr, 0, rst, 16, 4)
-        // TCP header
-        rst[20] = (packet[23].toInt() and 0xFF).toByte() // src port from orig dst
-        rst[21] = packet[22]
-        rst[22] = (packet[21].toInt() and 0xFF).toByte() // dst port from orig src
-        rst[23] = packet[20]
-        // RST + ACK flag
-        rst[33] = 0x14.toByte()
-        tunOutput?.write(rst)
+    // ============ UDP / DNS 劫持 ============
+
+    private fun handleUdp(pkt: ByteArray, len: Int, ipHdr: Int, srcIp: Int, dstIp: Int) {
+        val udpHdr = ipHdr + 8
+        if (udpHdr > len) return
+        val dstPort = pkt.getUShortAt(ipHdr + 2)
+        if (dstPort != DNS_PORT) return  // 非 DNS，丢弃（非 Pixiv 流量）
+
+        val dnsStart = ipHdr + 8
+        val dnsData = pkt.copyOfRange(dnsStart, len)
+        val qname = parseDnsName(dnsData, 12) ?: return
+        if (!qname.endsWith(".pixiv.net")) return
+
+        // 构造 DNS 响应: *.pixiv.net → 10.0.0.1
+        val resp = buildDnsResponse(pkt, len, ipHdr, srcIp, dstIp, dnsData, qname)
+        tunOutput?.write(resp)
     }
 
-    // ============ DNS 工具 ============
+    // ============ TCP 代理 ============
+
+    private fun handleTcp(pkt: ByteArray, len: Int, ipHdr: Int, srcIp: Int, dstIp: Int) {
+        val tcpHdr = ipHdr
+        val dstPort = pkt.getUShortAt(tcpHdr + 2)
+        val srcPort = pkt.getUShortAt(tcpHdr)
+        val flags = pkt[tcpHdr + 13].toInt() and 0xFF
+
+        // 仅处理去往虚拟 IP:443 的流量
+        if (dstIp.toIPv4() != VIRTUAL_IP || dstPort != 443) return
+
+        val key = sessionKey(srcIp, srcPort)
+        val existing = sessions[key]
+
+        when {
+            // === SYN: 新连接 ===
+            flags and 0x02 != 0 && existing == null -> {
+                val clientSeq = pkt.getUIntAt(tcpHdr + 4)
+                try {
+                    val sock = Socket()
+                    sock.connect(InetSocketAddress("127.0.0.1", PROXY_PORT), 5000)
+                    val session = TcpSession(
+                        clientIp = srcIp,
+                        clientPort = srcPort,
+                        clientSeq = clientSeq + 1,  // 期望下一个客户端 SEQ
+                        clientAck = clientSeq + 1,  // SYN 占用 1 个序列号
+                        proxySeq = (Math.random() * 0xFFFFFFFF).toLong() and 0xFFFFFFFFL,
+                        proxyAck = 0,
+                        socket = sock,
+                        output = sock.getOutputStream(),
+                        connected = true,
+                        lastActivity = System.currentTimeMillis()
+                    )
+                    sessions[key] = session
+
+                    // 发送 SYN-ACK 给客户端
+                    sendTcpPacket(
+                        srcIp = dstIp, dstIp = srcIp,
+                        srcPort = dstPort, dstPort = srcPort,
+                        seq = session.proxySeq,
+                        ack = session.clientSeq,
+                        flags = 0x12,  // SYN+ACK
+                        data = null
+                    )
+                    session.proxySeq++  // SYN 占用 1 个序列号
+
+                    // 启动代理→客户端读取线程
+                    scope.launch { relayFromProxy(key) }
+                } catch (_: Exception) {
+                    sendTcpPacket(
+                        srcIp = dstIp, dstIp = srcIp,
+                        srcPort = dstPort, dstPort = srcPort,
+                        seq = clientSeq, ack = 0,
+                        flags = 0x14, data = null  // RST+ACK
+                    )
+                }
+            }
+
+            // === ACK: 握手完成或数据 ===
+            flags and 0x10 != 0 && existing != null -> {
+                val clientSeq = pkt.getUIntAt(tcpHdr + 4)
+                val clientAck = pkt.getUIntAt(tcpHdr + 8)
+                val payloadLen = len - tcpHdr - ((pkt[tcpHdr + 12].toInt() shr 4) and 0x0F) * 4
+
+                existing.clientSeq = clientSeq + payloadLen
+                existing.proxyAck = clientAck
+                existing.lastActivity = System.currentTimeMillis()
+
+                // 如果有数据负载，转发到代理
+                if (payloadLen > 0) {
+                    val dataOff = tcpHdr + ((pkt[tcpHdr + 12].toInt() shr 4) and 0x0F) * 4
+                    try {
+                        existing.output.write(pkt, dataOff, payloadLen)
+                        existing.output.flush()
+                    } catch (_: Exception) {
+                        closeSession(key)
+                    }
+                }
+            }
+
+            // === FIN / RST: 关闭连接 ===
+            flags and 0x01 != 0 || flags and 0x04 != 0 -> {
+                existing?.let {
+                    sendFinAck(it)
+                    closeSession(key)
+                }
+            }
+        }
+    }
+
+    /** 从代理读取数据并转发到客户端 */
+    private suspend fun relayFromProxy(key: String) {
+        val session = sessions[key] ?: return
+        val buf = ByteArray(16384)
+        try {
+            val input: InputStream = session.socket.getInputStream()
+            while (isRunning && sessions.containsKey(key)) {
+                val n = input.read(buf)
+                if (n < 0) break
+                sendTcpPacket(
+                    srcIp = VIRTUAL_IP.toIPInt(), dstIp = session.clientIp,
+                    srcPort = 443, dstPort = session.clientPort,
+                    seq = session.proxySeq,
+                    ack = session.clientSeq,
+                    flags = 0x18,  // PSH+ACK
+                    data = buf.copyOf(n)
+                )
+                session.proxySeq += n
+                session.lastActivity = System.currentTimeMillis()
+            }
+        } catch (_: Exception) {}
+        closeSession(key)
+    }
+
+    // ============ TCP 包构造 ============
+
+    private fun sendTcpPacket(
+        srcIp: Int, dstIp: Int, srcPort: Int, dstPort: Int,
+        seq: Long, ack: Long, flags: Int, data: ByteArray?
+    ) {
+        val payloadLen = data?.size ?: 0
+        val totalLen = IP_HEADER_LEN + 20 + payloadLen
+        val pkt = ByteArray(totalLen)
+
+        // IP 头
+        pkt[0] = 0x45.toByte()
+        pkt.setUShortAt(2, totalLen)
+        pkt.setUShortAt(4, (sessionIdCounter++ % 65535).toInt())
+        pkt[8] = 64 // TTL
+        pkt[9] = TCP_PROTOCOL.toByte()
+        pkt.setIntAt(12, srcIp)
+        pkt.setIntAt(16, dstIp)
+
+        // TCP 头
+        val tcpOff = IP_HEADER_LEN
+        pkt.setUShortAt(tcpOff, srcPort)
+        pkt.setUShortAt(tcpOff + 2, dstPort)
+        pkt.setUIntAt(tcpOff + 4, seq)
+        pkt.setUIntAt(tcpOff + 8, ack)
+        pkt[tcpOff + 12] = 0x50.toByte()  // data offset = 5 words (20 bytes)
+        pkt[tcpOff + 13] = flags.toByte()
+        pkt.setUShortAt(tcpOff + 14, 65535)  // window size
+
+        // 数据
+        if (data != null) {
+            System.arraycopy(data, 0, pkt, tcpOff + 20, data.size)
+        }
+
+        // TCP 校验和
+        val csum = tcpChecksum(pkt, IP_HEADER_LEN, 20 + payloadLen, srcIp, dstIp)
+        pkt.setUShortAt(tcpOff + 16, csum)
+
+        try { tunOutput?.write(pkt) } catch (_: Exception) {}
+    }
+
+    // ============ 会话管理 ============
+
+    private fun sendFinAck(s: TcpSession) {
+        sendTcpPacket(
+            srcIp = VIRTUAL_IP.toIPInt(), dstIp = s.clientIp,
+            srcPort = 443, dstPort = s.clientPort,
+            seq = s.proxySeq, ack = s.clientSeq,
+            flags = 0x11, data = null  // FIN+ACK
+        )
+    }
+
+    private fun closeSession(key: String) {
+        sessions.remove(key)?.let {
+            try { it.socket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun cleanupSessions() {
+        while (isRunning) {
+            delay(30000)
+            val now = System.currentTimeMillis()
+            sessions.entries.removeAll { (_, s) ->
+                if (now - s.lastActivity > 60000) {
+                    try { s.socket.close() } catch (_: Exception) {}
+                    true
+                } else false
+            }
+        }
+    }
+
+    // ============ DNS 响应构造 ============
 
     private fun parseDnsName(data: ByteArray, offset: Int): String? {
         val sb = StringBuilder()
@@ -258,102 +354,148 @@ class PixivVpnService : VpnService() {
             while (pos < data.size) {
                 val len = data[pos].toInt() and 0xFF
                 if (len == 0) break
-                if (len and 0xC0 == 0xC0) {
-                    // 压缩指针，不支持
-                    break
-                }
+                if (len and 0xC0 == 0xC0) break
                 if (sb.isNotEmpty()) sb.append('.')
-                for (i in 1..len) {
-                    sb.append((data[pos + i].toInt() and 0xFF).toChar())
-                }
+                for (i in 1..len) sb.append((data[pos + i].toInt() and 0xFF).toChar())
                 pos += len + 1
             }
-        } catch (_: Exception) {
-            return null
-        }
+        } catch (_: Exception) { return null }
         return sb.toString().lowercase()
     }
 
-    private fun buildDnsResponse(request: ByteArray, dnsData: ByteArray, qname: String): ByteArray {
-        val respLen = dnsData.size + 16
-        val response = ByteArray(28 + respLen)
+    private fun buildDnsResponse(
+        pkt: ByteArray, len: Int, ipHdr: Int,
+        srcIp: Int, dstIp: Int,
+        dnsData: ByteArray, qname: String
+    ): ByteArray {
+        val ansLen = 16 // A record: name ptr(2) + type(2) + class(2) + ttl(4) + rdlen(2) + ip(4)
+        val respDnsLen = dnsData.size + ansLen
+        val udpLen = 8 + respDnsLen
+        val total = IP_HEADER_LEN + udpLen
+        val resp = ByteArray(total)
 
-        // IP 头
-        response[0] = 0x45.toByte()
-        response[2] = ((28 + respLen shr 8) and 0xFF).toByte()
-        response[3] = (28 + respLen and 0xFF).toByte()
-        response[4] = request[4]; response[5] = request[5] // ID
-        // TTL
-        response[8] = 64
-        // protocol = UDP
-        response[9] = 17
-        // 交换 IP
-        System.arraycopy(request, 16, response, 12, 4) // dst → src
-        System.arraycopy(request, 12, response, 16, 4) // src → dst
+        // IP 头: 交换 src/dst
+        resp[0] = 0x45.toByte()
+        resp.setUShortAt(2, total)
+        resp.setUShortAt(4, pkt.getUShortAt(4)) // 复用 ID
+        resp[8] = 64
+        resp[9] = UDP_PROTOCOL.toByte()
+        resp.setIntAt(12, dstIp)
+        resp.setIntAt(16, srcIp)
 
-        // UDP 头
-        // 交换端口
-        response[20] = request[22]; response[21] = request[23] // src = orig dst
-        response[22] = request[20]; response[23] = request[21] // dst = orig src
-        val udpLen = 8 + respLen
-        response[24] = ((udpLen shr 8) and 0xFF).toByte()
-        response[25] = (udpLen and 0xFF).toByte()
+        // UDP 头: 交换端口
+        val origSrcPort = pkt.getUShortAt(ipHdr)
+        val origDstPort = pkt.getUShortAt(ipHdr + 2)
+        resp.setUShortAt(IP_HEADER_LEN, origDstPort)
+        resp.setUShortAt(IP_HEADER_LEN + 2, origSrcPort)
+        resp.setUShortAt(IP_HEADER_LEN + 4, udpLen)
 
         // DNS 响应
-        System.arraycopy(dnsData, 0, response, 28, 2) // Transaction ID
-        response[30] = 0x81.toByte(); response[31] = 0x80.toByte() // Flags: response, no error
-        System.arraycopy(dnsData, 4, response, 32, 2) // Questions count
-        response[34] = dnsData[6]; response[35] = dnsData[7] // Answers count = same as questions
-        // Authority + Additional = 0
-        // 复制原始问题
-        val qEnd = 12 + qname.length + 6 // name + null + type(2) + class(2)
-        System.arraycopy(dnsData, 12, response, 40, qEnd - 12)
-        // 答案：指向虚拟 IP 10.0.0.1
-        val ansOffset = 28 + qEnd
-        // 域名指针
-        response[ansOffset] = 0xC0.toByte(); response[ansOffset + 1] = 0x0C.toByte()
-        response[ansOffset + 2] = 0x00; response[ansOffset + 3] = 0x01 // Type A
-        response[ansOffset + 4] = 0x00; response[ansOffset + 5] = 0x01 // Class IN
-        response[ansOffset + 6] = 0x00; response[ansOffset + 7] = 0x00 // TTL
-        response[ansOffset + 8] = 0x00; response[ansOffset + 9] = 60  // 60 seconds
-        response[ansOffset + 10] = 0x00; response[ansOffset + 11] = 0x04 // Data length = 4
-        // IP: 10.0.0.1
-        response[ansOffset + 12] = 10
-        response[ansOffset + 13] = 0
-        response[ansOffset + 14] = 0
-        response[ansOffset + 15] = 1
+        val dnsOff = IP_HEADER_LEN + 8
+        System.arraycopy(dnsData, 0, resp, dnsOff, 2) // TXID
+        resp[dnsOff + 2] = 0x81.toByte(); resp[dnsOff + 3] = 0x80.toByte() // flags
+        System.arraycopy(dnsData, 4, resp, dnsOff + 4, 2) // QDCOUNT
+        resp[dnsOff + 6] = dnsData[4]; resp[dnsOff + 7] = dnsData[5] // ANCOUNT = QDCOUNT
+        // 复制问题
+        val qLen = 12 + qname.length + 6
+        System.arraycopy(dnsData, 12, resp, dnsOff + 12, qLen - 12)
 
-        return response
+        // 答案: A 记录指向 10.0.0.1
+        val ansOff = dnsOff + qLen + 4 // +4 for the 2 authority/additional 0 counts
+        resp[ansOff] = 0xC0.toByte(); resp[ansOff + 1] = 0x0C.toByte() // 域名指针
+        resp.setUShortAt(ansOff + 2, 1)   // Type A
+        resp.setUShortAt(ansOff + 4, 1)   // Class IN
+        resp.setUIntAt(ansOff + 6, 60)    // TTL 60s
+        resp.setUShortAt(ansOff + 10, 4)  // Data length
+        resp[ansOff + 12] = 10; resp[ansOff + 13] = 0
+        resp[ansOff + 14] = 0; resp[ansOff + 15] = 1 // 10.0.0.1
+
+        return resp
+    }
+
+    // ============ TCP 校验和 ============
+
+    private fun tcpChecksum(pkt: ByteArray, ipHdr: Int, tcpLen: Int, srcIp: Int, dstIp: Int): Int {
+        val buf = ByteBuffer.allocate(12 + tcpLen).order(ByteOrder.BIG_ENDIAN)
+        buf.putInt(srcIp); buf.putInt(dstIp)
+        buf.put(0); buf.put(TCP_PROTOCOL.toByte())
+        buf.putShort(tcpLen.toShort())
+        buf.put(pkt, ipHdr, tcpLen)
+        buf.flip()
+        var sum = 0L
+        while (buf.hasRemaining()) {
+            if (buf.remaining() == 1) {
+                sum += (buf.get().toInt() and 0xFF) shl 8
+            } else {
+                sum += buf.getShort().toInt() and 0xFFFF
+            }
+        }
+        sum = (sum shr 16) + (sum and 0xFFFF)
+        sum += (sum shr 16)
+        return (sum.toInt() and 0xFFFF).inv() and 0xFFFF
     }
 
     // ============ 通知 ============
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "PixEz 登录代理",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "PixEz 登录 VPN 服务"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "PixEz 登录 VPN", NotificationManager.IMPORTANCE_LOW)
+                    .apply { description = "PixEz 登录代理运行中" })
         }
     }
 
     private fun buildNotification(): Notification {
-        val intent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        )
+        val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("PixEz 登录代理")
-            .setContentText("VPN 代理运行中，用于 Pixiv 登录")
+            .setContentTitle("PixEz 登录 VPN")
+            .setContentText("代理运行中")
             .setSmallIcon(android.R.drawable.ic_menu_share)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .build()
+            .setContentIntent(pi).setOngoing(true).build()
     }
+}
+
+// ============ ByteArray 扩展: 网络字节序读写 ============
+
+private fun ByteArray.getUShortAt(i: Int): Int =
+    ((this[i].toInt() and 0xFF) shl 8) or (this[i + 1].toInt() and 0xFF)
+
+private fun ByteArray.setUShortAt(i: Int, v: Int) {
+    this[i] = ((v shr 8) and 0xFF).toByte()
+    this[i + 1] = (v and 0xFF).toByte()
+}
+
+private fun ByteArray.getUIntAt(i: Int): Long =
+    ((this[i].toLong() and 0xFF) shl 24) or
+    ((this[i + 1].toLong() and 0xFF) shl 16) or
+    ((this[i + 2].toLong() and 0xFF) shl 8) or
+    (this[i + 3].toLong() and 0xFF)
+
+private fun ByteArray.setUIntAt(i: Int, v: Long) {
+    this[i] = ((v shr 24) and 0xFF).toByte()
+    this[i + 1] = ((v shr 16) and 0xFF).toByte()
+    this[i + 2] = ((v shr 8) and 0xFF).toByte()
+    this[i + 3] = (v and 0xFF).toByte()
+}
+
+private fun ByteArray.getIntAt(i: Int): Int =
+    ((this[i].toInt() and 0xFF) shl 24) or
+    ((this[i + 1].toInt() and 0xFF) shl 16) or
+    ((this[i + 2].toInt() and 0xFF) shl 8) or
+    (this[i + 3].toInt() and 0xFF)
+
+private fun ByteArray.setIntAt(i: Int, v: Int) {
+    this[i] = ((v shr 24) and 0xFF).toByte()
+    this[i + 1] = ((v shr 16) and 0xFF).toByte()
+    this[i + 2] = ((v shr 8) and 0xFF).toByte()
+    this[i + 3] = (v and 0xFF).toByte()
+}
+
+private fun Int.toIPv4() =
+    "${(this shr 24) and 0xFF}.${(this shr 16) and 0xFF}.${(this shr 8) and 0xFF}.${this and 0xFF}"
+
+private fun String.toIPInt(): Int {
+    val p = split(".")
+    return (p[0].toInt() shl 24) or (p[1].toInt() shl 16) or (p[2].toInt() shl 8) or p[3].toInt()
 }
