@@ -131,7 +131,7 @@ class _SoupPageState extends State<SoupPage> {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: SingleChildScrollView(
-                    child: Text(_soupStore.logText,
+                    child: SelectableText(_soupStore.logText,
                         style: TextStyle(fontSize: 10, color: Colors.grey.shade700,
                             fontFamily: 'monospace')),
                   ),
