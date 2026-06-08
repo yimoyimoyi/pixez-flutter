@@ -19,6 +19,7 @@ import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/fluent/component/painter_avatar.dart';
 import 'package:pixez/fluent/component/pixez_button.dart';
 import 'package:pixez/fluent/component/pixiv_image.dart';
+import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
@@ -78,7 +79,45 @@ class _SoupPageState extends State<SoupPage> {
   }
 
   Widget buildBlocProvider() {
-    if (_soupStore.amWorks.isEmpty) return Container();
+    if (_soupStore.amWorks.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.spotlight != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: PixivImage(
+                    widget.spotlight!.thumbnail,
+                    width: 200,
+                    height: 120,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                SizedBox(height: 12),
+                Text(widget.spotlight!.pureTitle,
+                    textAlign: TextAlign.center),
+                SizedBox(height: 16),
+              ],
+              Icon(FluentIcons.cloud, size: 48),
+              SizedBox(height: 12),
+              Text('正文加载失败\npixivision 启用了 Cloudflare 防护，请确认代理已开启',
+                  textAlign: TextAlign.center),
+              SizedBox(height: 16),
+              if (widget.url != null)
+                Button(
+                  child: Text('在浏览器中打开'),
+                  onPressed: () {
+                    try { CustomTabPlugin.launch(widget.url!); } catch (_) {}
+                  },
+                ),
+            ],
+          ),
+        ),
+      );
+    }
     final count = (MediaQuery.of(context).orientation == Orientation.portrait)
         ? userSetting.crossCount
         : userSetting.hCrossCount;

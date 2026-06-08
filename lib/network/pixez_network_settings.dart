@@ -11,6 +11,7 @@ class PixezNetworkSettings {
   static const accountHost = 'accounts.pixiv.net';
   static const imageHost = 'i.pximg.net';
   static const imageStaticHost = 's.pximg.net';
+  static const visionHost = 'www.pixivision.net';
 
   static r.ClientSettings? forHost(String host, NetworkMode mode) {
     if (mode == NetworkMode.standard) return null;
@@ -60,7 +61,7 @@ class PixezNetworkSettings {
 
   /// 返回源站 IP 池（多 IP，参考 Pixiv-Nginx upstream）
   static List<String> _compatibleIps(String host) {
-    if (host == appApiHost || host == oauthHost || host == accountHost) {
+    if (host == appApiHost || host == oauthHost || host == accountHost || host == visionHost) {
       return Hoster.apiPool();
     }
     if (host == imageHost || host == imageStaticHost) {

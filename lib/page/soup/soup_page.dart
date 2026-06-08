@@ -17,6 +17,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/null_hero.dart';
+import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/models/amwork.dart';
@@ -91,7 +92,51 @@ class _SoupPageState extends State<SoupPage> {
   }
 
   Widget buildBlocProvider() {
-    if (_soupStore.amWorks.isEmpty) return Container();
+    if (_soupStore.amWorks.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.spotlight != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: PixivImage(
+                    widget.spotlight!.thumbnail,
+                    width: 200,
+                    height: 120,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                SizedBox(height: 12),
+                Text(widget.spotlight!.pureTitle,
+                    textAlign: TextAlign.center),
+                SizedBox(height: 16),
+              ],
+              Icon(Icons.cloud_off, size: 48, color: Colors.grey),
+              SizedBox(height: 12),
+              Text('正文加载失败',
+                  style: TextStyle(color: Colors.grey)),
+              SizedBox(height: 4),
+              Text('pixivision 启用了 Cloudflare 防护，请确认代理已开启',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                  textAlign: TextAlign.center),
+              SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: Icon(Icons.open_in_browser, size: 16),
+                label: Text('在浏览器中打开'),
+                onPressed: () {
+                  try {
+                    CustomTabPlugin.launch(widget.url);
+                  } catch (_) {}
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return ListView.builder(
       itemBuilder: (BuildContext context, int index) {
         return Builder(builder: (context) {

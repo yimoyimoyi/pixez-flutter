@@ -23,6 +23,9 @@ import 'package:html/parser.dart' show parse;
 import 'package:pixez/main.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/network/pixez_network_settings.dart';
+import 'package:rhttp/rhttp.dart' as r;
+import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:html/dom.dart';
 
 part 'soup_store.g.dart';
@@ -30,13 +33,26 @@ part 'soup_store.g.dart';
 class SoupStore = _SoupStoreBase with _$SoupStore;
 
 abstract class _SoupStoreBase with Store {
-  final dio = Dio(BaseOptions(headers: {
-    HttpHeaders.acceptLanguageHeader:
-        userSetting.languageNum < 5 ? ApiClient.Accept_Language : "en-US",
-    'user-agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.26 Safari/537.36 Edg/85.0.564.13',
-    HttpHeaders.refererHeader: 'https://www.pixivision.net/zh/',
-  }));
+  // 使用 compat 模式（sni:false + 源站 IP 池），直连 Pixiv 源站绕过 Cloudflare
+  @observable
+  late Dio dio;
+
+  Future<Dio> _createDio() async {
+    // 使用 compat 模式直连 Pixiv 源站 IP，绕过 Cloudflare
+    // www.pixivision.net 与 app-api.pixiv.net 共享同一批源站服务器
+    final client = await r.RhttpCompatibleClient.createSync(
+      settings: PixezNetworkSettings.compatible(),
+    );
+    final d = Dio(BaseOptions(headers: {
+      HttpHeaders.acceptLanguageHeader:
+          userSetting.languageNum < 5 ? ApiClient.Accept_Language : "en-US",
+      'user-agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+      HttpHeaders.refererHeader: 'https://www.pixivision.net/zh/',
+    }));
+    d.httpClientAdapter = ConversionLayerAdapter(client);
+    return d;
+  }
 
   ObservableList<AmWork> amWorks = ObservableList();
 
@@ -46,13 +62,17 @@ abstract class _SoupStoreBase with Store {
   @action
   fetch(String url) async {
     try {
+      dio = await _createDio();
       if (userSetting.languageNum == 0 || userSetting.languageNum >= 5) {
         _fetchEn(url);
       } else {
         _fetchCNTW(url);
       }
-    } on DioException {
-      BotToast.showText(text: "404 NOT FOUND");
+    } on DioException catch (e) {
+      final msg = e.response?.statusCode == 404
+          ? '404 NOT FOUND'
+          : '特辑加载失败：${e.type.name}';
+      BotToast.showText(text: msg);
     } catch (e) {}
   }
 
