@@ -23,7 +23,7 @@ import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
-import 'package:pixez/weiss_plugin.dart';
+import 'package:pixez/er/login_proxy.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -164,13 +164,14 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _launchWebView(String url) async {
     try {
+      var finalUrl = url;
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await WeissPlugin.start();
-        await WeissPlugin.proxy();
+        await LoginProxy.start();
+        finalUrl = LoginProxy.proxyUrl(url);
       }
       await Leader.push(
         context,
-        WebViewPage(url: url),
+        WebViewPage(url: finalUrl),
         icon: Icon(FluentIcons.signin),
         title: Text(I18n.of(context).login),
       );

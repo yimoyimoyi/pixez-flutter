@@ -4,7 +4,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/main.dart';
-import 'package:pixez/weiss_plugin.dart';
+import 'package:pixez/er/login_proxy.dart';
 
 class WebViewPage extends StatefulWidget {
   final String url;
@@ -74,8 +74,8 @@ javascript:(function() {
 
   @override
   void dispose() {
+    LoginProxy.stop();
     super.dispose();
-    WeissPlugin.stop();
   }
 
   @override
