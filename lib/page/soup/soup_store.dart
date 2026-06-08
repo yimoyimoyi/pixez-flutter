@@ -40,9 +40,11 @@ abstract class _SoupStoreBase with Store {
   Future<Dio> _createDio() async {
     // 使用 compat 模式直连 Pixiv 源站 IP，绕过 Cloudflare
     // www.pixivision.net 与 app-api.pixiv.net 共享同一批源站服务器
+    print('SoupStore: creating compat client...');
     final client = await r.RhttpCompatibleClient.createSync(
       settings: PixezNetworkSettings.compatible(),
     );
+    print('SoupStore: compat client created, creating Dio...');
     final d = Dio(BaseOptions(headers: {
       HttpHeaders.acceptLanguageHeader:
           userSetting.languageNum < 5 ? ApiClient.Accept_Language : "en-US",

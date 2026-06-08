@@ -61,8 +61,12 @@ class PixezNetworkSettings {
 
   /// 返回源站 IP 池（多 IP，参考 Pixiv-Nginx upstream）
   static List<String> _compatibleIps(String host) {
-    if (host == appApiHost || host == oauthHost || host == accountHost || host == visionHost) {
+    if (host == appApiHost || host == oauthHost || host == accountHost) {
       return Hoster.apiPool();
+    }
+    if (host == visionHost) {
+      // .137/.138/.149/.150 对 pixivision 返回 421，只使用前 9 个已验证 IP
+      return Hoster.apiPool().take(9).toList();
     }
     if (host == imageHost || host == imageStaticHost) {
       return Hoster.imagePool();
