@@ -81,7 +81,7 @@ abstract class _SoupStoreBase with Store {
             ? 'zh-CN'
             : "en-US",
         'user-agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         HttpHeaders.refererHeader: 'https://www.pixivision.net/zh/',
       },
     ));
@@ -151,13 +151,17 @@ abstract class _SoupStoreBase with Store {
     var document = parse(body);
     _log('HTML parsed');
 
-    // 方法1: querySelectorAll
+    // 方法1: 桌面版 .am__work
     final works1 = document.querySelectorAll('.am__work');
-    _log('.am__work via querySelectorAll = ${works1.length}');
+    _log('.am__work (desktop) = ${works1.length}');
 
-    // 方法2: getElementsByClassName
+    // 方法2: 手机版 ._article-illust-work
+    final worksSp = document.querySelectorAll('._article-illust-work');
+    _log('._article-illust-work (mobile) = ${worksSp.length}');
+
+    // 方法3: getElementsByClassName 桌面版
     final works2 = document.getElementsByClassName('am__work');
-    _log('.am__work via getElementsByClassName = ${works2.length}');
+    _log('.am__work via class = ${works2.length}');
 
     // 方法3: 直接搜索所有 div 的 class
     final allDivs = document.getElementsByTagName('div');
@@ -177,10 +181,18 @@ abstract class _SoupStoreBase with Store {
     }
     _log('relevant classes: $relevantClasses');
 
-    // 使用找到的元素
-    final workElements = works1.isNotEmpty ? works1 : works2;
-    if (workElements.isEmpty && workCount == 0) {
-      // 最后尝试: 查找 article 元素
+    // 使用找到的元素（优先桌面版，回退手机版）
+    var workElements = works1.isNotEmpty ? works1 : works2;
+    final isMobile = workElements.isEmpty && worksSp.isNotEmpty;
+
+    if (isMobile) {
+      workElements = worksSp;
+      _log('using mobile layout');
+      // 手机版用不同的解析方式
+      for (var work in worksSp) {
+        _parseMobileWork(work);
+      }
+    } else if (workElements.isEmpty && workCount == 0) {
       final articles = document.getElementsByTagName('article');
       _log('articles found: ${articles.length}');
       if (articles.isNotEmpty) {
@@ -189,16 +201,65 @@ abstract class _SoupStoreBase with Store {
       }
       errorMessage = '未找到作品元素（class 列表见日志）';
       return;
-    }
-
-    // 解析作品
-    for (var work in workElements) {
-      _parseAmWork(work);
+    } else {
+      for (var work in workElements) {
+        _parseAmWork(work);
+      }
     }
     _log('parsed ${amWorks.length} works');
   }
 
-  /// 解析新版 .am__work 元素
+  /// 解析手机版 ._article-illust-work 元素
+  void _parseMobileWork(Element work) {
+    AmWork amWork = AmWork();
+    final links = work.getElementsByTagName('a');
+    final imgs = work.getElementsByTagName('img');
+
+    for (var aa in links) {
+      final href = aa.attributes['href'];
+      if (href == null) continue;
+
+      if (href.contains('artworks')) {
+        amWork.arworkLink = href;
+        // 作品图在 amsp__work__main > img
+        for (var img in imgs) {
+          final src = img.attributes['src'] ?? '';
+          if (src.contains('pximg.net') && !src.contains('user-profile')) {
+            amWork.showImage = src;
+            break;
+          }
+        }
+        // 标题
+        final h3s = work.getElementsByTagName('h3');
+        if (h3s.isNotEmpty) amWork.title = h3s.first.text.trim();
+        if (amWork.title == null || amWork.title!.isEmpty) {
+          amWork.title = aa.text.trim();
+        }
+      } else if (href.contains('users')) {
+        amWork.userLink = href;
+        // 头像
+        for (var img in imgs) {
+          final src = img.attributes['src'] ?? '';
+          if (src.contains('user-profile')) {
+            amWork.userImage = src;
+            break;
+          }
+        }
+        // 作者
+        final namePs = work.getElementsByTagName('p');
+        if (namePs.isNotEmpty) amWork.user = namePs.first.text.trim();
+      }
+    }
+
+    amWork.userImage ??= imgs.isNotEmpty ? imgs.first.attributes['src'] : null;
+
+    if (amWork.userLink != null && amWork.arworkLink != null) {
+      amWorks.add(amWork);
+      _log('added mobile work "${amWork.title}"');
+    }
+  }
+
+  /// 解析桌面版 .am__work 元素
   void _parseAmWork(Element work) {
     AmWork amWork = AmWork();
     final links = work.getElementsByTagName('a');
