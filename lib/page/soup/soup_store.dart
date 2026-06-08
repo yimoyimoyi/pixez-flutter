@@ -96,128 +96,120 @@ abstract class _SoupStoreBase with Store {
     Response response = await dio.request(url);
     print('SoupStore _fetchEn status: ${response.statusCode}');
     final body = response.data.toString();
-    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 200 ? body.length : 200)}');
+    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 300 ? body.length : 300)}');
     var document = parse(body);
     amWorks.clear();
+    description = '';
 
     final articles = document.getElementsByTagName('article');
     if (articles.isEmpty) {
-      print('SoupStore: no <article> found, body preview: ${body.substring(0, body.length < 500 ? body.length : 500)}');
+      print('SoupStore: no <article> found');
       errorMessage = '页面结构异常，未找到文章内容';
       return;
     }
+    final article = articles.first;
 
-    var nodes = document
-        .getElementsByTagName("article")
-        .first
-        .getElementsByClassName('am__body')
-        .first
-        .children;
-
-    Element workInfo;
-    if (nodes.first.attributes['class']!.contains('_feature')) {
-      // feature article body
-      nodes = nodes.first.children;
-      description = '';
-    } else {
-      workInfo = document
-          .getElementsByTagName("article")
-          .first
-          .getElementsByTagName('header')
-          .first;
-      description = workInfo.toTargetString();
+    final amBodyList = article.getElementsByClassName('am__body');
+    if (amBodyList.isEmpty) {
+      print('SoupStore: no .am__body found, classes on article children:');
+      for (var c in article.children) {
+        print('  child class: ${c.attributes["class"]}');
+      }
+      errorMessage = '文章结构已更新，请联系开发者';
+      return;
     }
 
-    for (var value in nodes) {
-      try {
-        if (!value.attributes['class']!.contains('illust')) {
-          continue;
-        }
-        AmWork amWork = AmWork();
-        for (var aa in value.getElementsByTagName('a')) {
-          var a = aa.attributes['href'];
-          var segments = Uri.parse(a!).pathSegments;
-          if (a.startsWith('https') &&
-              segments.length > 2 &&
-              segments[segments.length - 2] == 'artworks') {
-            amWork.arworkLink = a;
-            amWork.showImage =
-                value.getElementsByTagName('img')[1].attributes['src']!;
-            amWork.title = value.getElementsByTagName('h3').first.text;
-          } else if (a.startsWith('https') &&
-              segments.length > 2 &&
-              segments[segments.length - 2] == 'users') {
-            amWork.userLink = a;
-            amWork.user = value.getElementsByTagName('p').first.text;
-            amWork.userImage =
-                value.getElementsByTagName('img').first.attributes['src']!;
-          }
-        }
-        if (amWork.userLink == null || amWork.arworkLink == null) {
-          continue;
-        }
-        amWorks.add(amWork);
-      } catch (e) {
-        print(e);
+    var nodes = amBodyList.first.children;
+
+    if (nodes.isNotEmpty && nodes.first.attributes['class']!.contains('_feature')) {
+      nodes = nodes.first.children;
+    } else {
+      final headers = article.getElementsByTagName('header');
+      if (headers.isNotEmpty) {
+        description = headers.first.toTargetString();
       }
     }
+
+    _parseIllustNodes(nodes);
   }
 
   _fetchCNTW(url) async {
     Response response = await dio.request(url);
     print('SoupStore _fetchCNTW status: ${response.statusCode}');
     final body = response.data.toString();
-    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 200 ? body.length : 200)}');
+    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 300 ? body.length : 300)}');
     var document = parse(body);
     amWorks.clear();
+    description = '';
 
-    var nodes = document
-        .getElementsByTagName("article")
-        .first
-        .getElementsByClassName('am__body')
-        .first
-        .children;
+    final articles = document.getElementsByTagName('article');
+    if (articles.isEmpty) {
+      print('SoupStore: no <article> found');
+      errorMessage = '页面结构异常，未找到文章内容';
+      return;
+    }
+    final article = articles.first;
 
-    Element workInfo;
-    if (nodes.first.attributes['class']!.contains('_feature')) {
-      // feature article body
-      nodes = nodes.first.children;
-      description = '';
-    } else {
-      workInfo = document
-          .getElementsByTagName("article")
-          .first
-          .getElementsByTagName('header')
-          .first;
-      description = workInfo.toTargetString();
+    final amBodyList = article.getElementsByClassName('am__body');
+    if (amBodyList.isEmpty) {
+      print('SoupStore: no .am__body found, article children classes:');
+      for (var c in article.children) {
+        print('  ${c.attributes["class"]}');
+      }
+      errorMessage = '文章结构已更新，请联系开发者';
+      return;
     }
 
+    var nodes = amBodyList.first.children;
+
+    if (nodes.isNotEmpty && nodes.first.attributes['class']!.contains('_feature')) {
+      nodes = nodes.first.children;
+    } else {
+      final headers = article.getElementsByTagName('header');
+      if (headers.isNotEmpty) {
+        description = headers.first.toTargetString();
+      }
+    }
+
+    _parseIllustNodes(nodes);
+  }
+
+  /// 从 DOM 节点列表中提取插画信息
+  void _parseIllustNodes(List<Element> nodes) {
     for (var value in nodes) {
       try {
-        if (!value.attributes['class']!.contains('illust')) {
-          continue;
-        }
+        final cls = value.attributes['class'];
+        if (cls == null || !cls.contains('illust')) continue;
+
         AmWork amWork = AmWork();
-        for (var aa in value.getElementsByTagName('a')) {
-          var a = aa.attributes['href']!;
+        final links = value.getElementsByTagName('a');
+        final imgs = value.getElementsByTagName('img');
+
+        for (var aa in links) {
+          var a = aa.attributes['href'];
+          if (a == null) continue;
+
           if (a.contains('https://www.pixiv.net/artworks')) {
             amWork.arworkLink = a;
-            amWork.showImage =
-                value.getElementsByTagName('img')[1].attributes['src']!;
-            amWork.title = value.getElementsByTagName('h3').first.text;
+            if (imgs.length > 1) {
+              amWork.showImage = imgs[1].attributes['src']!;
+            }
+            final h3s = value.getElementsByTagName('h3');
+            if (h3s.isNotEmpty) amWork.title = h3s.first.text;
           } else if (a.contains('https://www.pixiv.net/users')) {
             amWork.userLink = a;
-            amWork.user = value.getElementsByTagName('p').first.text;
-            amWork.userImage =
-                value.getElementsByTagName('img').first.attributes['src']!;
+            final ps = value.getElementsByTagName('p');
+            if (ps.isNotEmpty) amWork.user = ps.first.text;
+            if (imgs.isNotEmpty) {
+              amWork.userImage = imgs.first.attributes['src']!;
+            }
           }
         }
-        if (amWork.userLink == null || amWork.arworkLink == null) {
-          continue;
+        if (amWork.userLink != null && amWork.arworkLink != null) {
+          amWorks.add(amWork);
         }
-        amWorks.add(amWork);
       } catch (e) {
-        print(e);
+        print('SoupStore parse illust node error: $e');
       }
     }
   }
