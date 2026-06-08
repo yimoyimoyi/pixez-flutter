@@ -175,42 +175,129 @@ abstract class _SoupStoreBase with Store {
   }
 
   /// 从 DOM 节点列表中提取插画信息
+  /// 支持两种结构：新版 .am__work 和旧版 .illust
   void _parseIllustNodes(List<Element> nodes) {
-    for (var value in nodes) {
+    // 新版结构：在 am__body 子节点中寻找 .am__work 或包含 .am__work 的节点
+    for (var node in nodes) {
       try {
-        final cls = value.attributes['class'];
-        if (cls == null || !cls.contains('illust')) continue;
+        // 新版：.article-item._feature-article-body__pixiv_illust > .am__work
+        final workElements = node.getElementsByClassName('am__work');
+        if (workElements.isNotEmpty) {
+          for (var work in workElements) {
+            _parseAmWork(work);
+          }
+          continue;
+        }
 
-        AmWork amWork = AmWork();
-        final links = value.getElementsByTagName('a');
-        final imgs = value.getElementsByTagName('img');
+        // 直接在子节点中找 .am__work
+        final cls = node.attributes['class'] ?? '';
+        if (cls.contains('am__work')) {
+          _parseAmWork(node);
+          continue;
+        }
 
-        for (var aa in links) {
-          var a = aa.attributes['href'];
-          if (a == null) continue;
+        // 旧版兼容：.illust 节点
+        if (cls.contains('illust')) {
+          _parseOldIllust(node);
+        }
+      } catch (e) {
+        print('SoupStore parse node error: $e');
+      }
+    }
+  }
 
-          if (a.contains('https://www.pixiv.net/artworks')) {
-            amWork.arworkLink = a;
-            if (imgs.length > 1) {
-              amWork.showImage = imgs[1].attributes['src']!;
-            }
-            final h3s = value.getElementsByTagName('h3');
-            if (h3s.isNotEmpty) amWork.title = h3s.first.text;
-          } else if (a.contains('https://www.pixiv.net/users')) {
-            amWork.userLink = a;
-            final ps = value.getElementsByTagName('p');
-            if (ps.isNotEmpty) amWork.user = ps.first.text;
-            if (imgs.isNotEmpty) {
-              amWork.userImage = imgs.first.attributes['src']!;
+  /// 解析新版 .am__work 元素
+  void _parseAmWork(Element work) {
+    AmWork amWork = AmWork();
+    final links = work.getElementsByTagName('a');
+    final imgs = work.getElementsByTagName('img');
+
+    for (var aa in links) {
+      final href = aa.attributes['href'];
+      if (href == null) continue;
+
+      if (href.contains('artworks')) {
+        amWork.arworkLink ??= href;
+        // 作品图在 am__work__main 中的 img.am__work__illust
+        if (amWork.showImage == null) {
+          for (var img in imgs) {
+            final ic = img.attributes['class'] ?? '';
+            if (ic.contains('am__work__illust')) {
+              amWork.showImage = img.attributes['src'];
+              break;
             }
           }
         }
-        if (amWork.userLink != null && amWork.arworkLink != null) {
-          amWorks.add(amWork);
+        // 标题在 h3.am__work__title 中
+        final h3s = work.getElementsByTagName('h3');
+        if (h3s.isNotEmpty) amWork.title = h3s.first.text;
+      } else if (href.contains('users')) {
+        amWork.userLink ??= href;
+        // 头像在 img.am__work__uesr-icon 中
+        for (var img in imgs) {
+          final ic = img.attributes['class'] ?? '';
+          if (ic.contains('am__work__uesr-icon') || ic.contains('uesr-icon')) {
+            amWork.userImage = img.attributes['src'];
+            break;
+          }
         }
-      } catch (e) {
-        print('SoupStore parse illust node error: $e');
+        // 作者名在 p.am__work__user-name 中
+        final namePs = work.getElementsByClassName('am__work__user-name');
+        if (namePs.isNotEmpty) {
+          amWork.user = namePs.first.text.replaceAll('by ', '');
+        } else {
+          final ps = work.getElementsByTagName('p');
+          if (ps.isNotEmpty) amWork.user = ps.first.text;
+        }
       }
+    }
+
+    // 如果标题没从 h3 拿到，从 artwork 链接文本获取
+    if (amWork.title == null) {
+      for (var aa in links) {
+        final href = aa.attributes['href'] ?? '';
+        if (href.contains('artworks')) {
+          amWork.title = aa.text.trim();
+          if (amWork.title!.isNotEmpty) break;
+        }
+      }
+    }
+
+    if (amWork.userLink != null && amWork.arworkLink != null) {
+      // 如果没找到头像，尝试从第一个 img 获取
+      amWork.userImage ??= imgs.isNotEmpty ? imgs.first.attributes['src'] : null;
+      amWorks.add(amWork);
+    }
+  }
+
+  /// 旧版 .illust 节点解析（兼容可能存在的旧格式）
+  void _parseOldIllust(Element value) {
+    AmWork amWork = AmWork();
+    final links = value.getElementsByTagName('a');
+    final imgs = value.getElementsByTagName('img');
+
+    for (var aa in links) {
+      var a = aa.attributes['href'];
+      if (a == null) continue;
+
+      if (a.contains('artworks')) {
+        amWork.arworkLink = a;
+        if (imgs.length > 1) {
+          amWork.showImage = imgs[1].attributes['src'];
+        }
+        final h3s = value.getElementsByTagName('h3');
+        if (h3s.isNotEmpty) amWork.title = h3s.first.text;
+      } else if (a.contains('users')) {
+        amWork.userLink = a;
+        final ps = value.getElementsByTagName('p');
+        if (ps.isNotEmpty) amWork.user = ps.first.text;
+        if (imgs.isNotEmpty) {
+          amWork.userImage = imgs.first.attributes['src'];
+        }
+      }
+    }
+    if (amWork.userLink != null && amWork.arworkLink != null) {
+      amWorks.add(amWork);
     }
   }
 }
