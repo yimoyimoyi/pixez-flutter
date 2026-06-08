@@ -90,30 +90,53 @@ class _LoginPageState extends State<LoginPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       SizedBox(height: 10),
-                      // 1) 内部 WebView 登录 — 兼容模式本地代理
+                      // 1) Token 登录 — rhttp compat 直连，默认主方案
                       FilledButton.icon(
-                        icon: Icon(Icons.web),
+                        icon: Icon(Icons.vpn_key_outlined),
                         label: Text(I18n.of(context).login),
+                        onPressed: () async {
+                          Leader.push(context, TokenPage());
+                        },
+                      ),
+                      SizedBox(height: 12),
+                      // 2) Http Proxy 登录 — 能加载页面，reCAPTCHA 可能报错
+                      OutlinedButton.icon(
+                        icon: Icon(Icons.web),
+                        label: Text("内部 WebView (Proxy)"),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchWebView(url);
+                            _launchProxyWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 4),
-                      FilledButton.icon(
+                      OutlinedButton.icon(
                         icon: Icon(Icons.person_add),
                         label: Text(I18n.of(context).dont_have_account),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl(create: true);
-                            _launchWebView(url);
+                            _launchProxyWebView(url);
+                          } catch (e) {}
+                        },
+                      ),
+                      SizedBox(height: 8),
+                      // 3) VpnService DNS 劫持 — 实验性
+                      OutlinedButton.icon(
+                        icon: Icon(Icons.vpn_lock),
+                        label: Text("内部 WebView (VPN)"),
+                        onPressed: () async {
+                          try {
+                            final url = await OAuthClient.generateWebviewUrl();
+                            _launchVpnWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 12),
-                      // 2) 外部浏览器
+                      Divider(),
+                      SizedBox(height: 4),
+                      // 4) 外部浏览器
                       OutlinedButton.icon(
                         icon: Icon(Icons.open_in_browser),
                         label: Text("外部浏览器"),
@@ -122,17 +145,6 @@ class _LoginPageState extends State<LoginPage> {
                             final url = await OAuthClient.generateWebviewUrl();
                             _launchExternal(url);
                           } catch (e) {}
-                        },
-                      ),
-                      SizedBox(height: 12),
-                      Divider(),
-                      SizedBox(height: 4),
-                      // 3) Token 登录 — rhttp compat 直连
-                      OutlinedButton.icon(
-                        icon: Icon(Icons.vpn_key_outlined, size: 16),
-                        label: Text("Token"),
-                        onPressed: () async {
-                          Leader.push(context, TokenPage());
                         },
                       ),
                       SizedBox(height: 4),
@@ -181,28 +193,40 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  /// 内部 WebView 登录（兼容模式本地代理）
-  Future<void> _launchWebView(String url) async {
-    // iOS: 直接用 WebView
+  /// HTTP Proxy 登录 — LoginProxy HTTP，页面能加载但 reCAPTCHA 可能报 localhost 错误
+  Future<void> _launchProxyWebView(String url) async {
     if (Platform.isIOS || Platform.isMacOS) {
       final result = await Leader.push(context, WebViewPage(url: url));
       if (result == "OK") Leader.pushUntilHome(context);
       return;
     }
-    // Android: VpnService DNS 劫持 + LoginProxy HTTPS 代理
     try {
       var finalUrl = url;
       if (userSetting.networkMode.usesCompatibleConnection) {
-        // 启动 VPN（DNS 劫持 *.pixiv.net → 127.0.0.1）
-        final vpnResult = await PixivVpnPlugin.start();
-        // 启动 HTTPS 代理（TLS 终结 + rhttp compat 转发）
-        await LoginProxy.startHttps();
-        // WebView 加载真实 Pixiv URL（DNS 被劫持到本地代理）
-        finalUrl = url;
+        await LoginProxy.start();
+        finalUrl = LoginProxy.proxyUrl(url);
       }
       await Leader.push(context, WebViewPage(url: finalUrl));
     } catch (e) {
-      BotToast.showText(text: "WebView 登录失败，请尝试外部浏览器或 Token: $e");
+      BotToast.showText(text: "Proxy 登录失败: $e");
+    }
+  }
+
+  /// VpnService DNS 劫持登录 — 实验性，HTTPS 代理 + 真实域名
+  Future<void> _launchVpnWebView(String url) async {
+    if (Platform.isIOS || Platform.isMacOS) {
+      final result = await Leader.push(context, WebViewPage(url: url));
+      if (result == "OK") Leader.pushUntilHome(context);
+      return;
+    }
+    try {
+      if (userSetting.networkMode.usesCompatibleConnection) {
+        await PixivVpnPlugin.start();
+        await LoginProxy.startHttps();
+      }
+      await Leader.push(context, WebViewPage(url: url));
+    } catch (e) {
+      BotToast.showText(text: "VPN 登录失败: $e");
     }
   }
 }

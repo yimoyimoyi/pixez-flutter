@@ -90,28 +90,51 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(
                     children: <Widget>[
                       SizedBox(height: 10),
-                      // 1) 内部 WebView 登录 — 兼容模式本地代理
+                      // 1) Token 登录 — rhttp compat 直连
                       FilledButton(
                         child: Text(I18n.of(context).login),
                         onPressed: () async {
+                          await showDialog(
+                            context: context,
+                            builder: (context) => TokenPage(),
+                          );
+                        },
+                      ),
+                      SizedBox(height: 8),
+                      // 2) Http Proxy 登录
+                      Button(
+                        child: Text("内部 WebView (Proxy)"),
+                        onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchWebView(url);
+                            _launchProxyWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 4),
-                      FilledButton(
+                      Button(
                         child: Text(I18n.of(context).dont_have_account),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl(create: true);
-                            _launchWebView(url);
+                            _launchProxyWebView(url);
+                          } catch (e) {}
+                        },
+                      ),
+                      SizedBox(height: 4),
+                      // 3) VpnService 实验性
+                      Button(
+                        child: Text("内部 WebView (VPN)"),
+                        onPressed: () async {
+                          try {
+                            final url = await OAuthClient.generateWebviewUrl();
+                            _launchVpnWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 8),
-                      // 2) 外部浏览器
+                      Divider(),
+                      // 4) 外部浏览器
                       Button(
                         child: Text("外部浏览器"),
                         onPressed: () async {
@@ -119,18 +142,6 @@ class _LoginPageState extends State<LoginPage> {
                             final url = await OAuthClient.generateWebviewUrl();
                             _launchExternal(url);
                           } catch (e) {}
-                        },
-                      ),
-                      SizedBox(height: 8),
-                      Divider(),
-                      // 3) Token
-                      Button(
-                        child: Text("Token"),
-                        onPressed: () async {
-                          await showDialog(
-                            context: context,
-                            builder: (context) => TokenPage(),
-                          );
                         },
                       ),
                       SizedBox(height: 4),
@@ -163,13 +174,12 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  Future<void> _launchWebView(String url) async {
+  Future<void> _launchProxyWebView(String url) async {
     try {
       var finalUrl = url;
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await PixivVpnPlugin.start();
-        await LoginProxy.startHttps();
-        finalUrl = url;
+        await LoginProxy.start();
+        finalUrl = LoginProxy.proxyUrl(url);
       }
       await Leader.push(
         context,
@@ -178,7 +188,24 @@ class _LoginPageState extends State<LoginPage> {
         title: Text(I18n.of(context).login),
       );
     } catch (e) {
-      BotToast.showText(text: "WebView 登录失败，请尝试外部浏览器或 Token: $e");
+      BotToast.showText(text: "Proxy 登录失败: $e");
+    }
+  }
+
+  Future<void> _launchVpnWebView(String url) async {
+    try {
+      if (userSetting.networkMode.usesCompatibleConnection) {
+        await PixivVpnPlugin.start();
+        await LoginProxy.startHttps();
+      }
+      await Leader.push(
+        context,
+        WebViewPage(url: url),
+        icon: Icon(FluentIcons.signin),
+        title: Text(I18n.of(context).login),
+      );
+    } catch (e) {
+      BotToast.showText(text: "VPN 登录失败: $e");
     }
   }
 }
