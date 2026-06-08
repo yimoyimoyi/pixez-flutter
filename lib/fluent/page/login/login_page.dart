@@ -24,6 +24,7 @@ import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/er/login_proxy.dart';
+import 'package:pixez/er/pixiv_vpn_plugin.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -166,8 +167,9 @@ class _LoginPageState extends State<LoginPage> {
     try {
       var finalUrl = url;
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await LoginProxy.start();
-        finalUrl = LoginProxy.proxyUrl(url);
+        await PixivVpnPlugin.start();
+        await LoginProxy.startHttps();
+        finalUrl = url;
       }
       await Leader.push(
         context,

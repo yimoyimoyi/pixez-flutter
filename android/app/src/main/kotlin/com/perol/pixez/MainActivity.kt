@@ -41,6 +41,7 @@ import com.perol.pixez.plugin.CustomTab
 import com.perol.pixez.plugin.DeepLinkPlugin
 import com.perol.pixez.plugin.JsEvalPlugin
 import com.perol.pixez.plugin.OpenSettinger
+import com.perol.pixez.plugin.PixivVpnPlugin
 import com.perol.pixez.plugin.Safer
 import com.perol.pixez.plugin.SecurePlugin
 import com.perol.pixez.plugin.SupporterPlugin
@@ -90,6 +91,7 @@ class MainActivity : FlutterActivity() {
         saveMode = sharedPreferences.getLong("flutter.save_mode", 0).toInt()
         OpenSettinger.bindChannel(flutterEngine, this)
         Weiss.bindChannel(flutterEngine)
+        PixivVpnPlugin.bindChannel(this, flutterEngine)
         CustomTab.bindChannel(this, flutterEngine)
         Safer.bindChannel(this, flutterEngine)
         JsEvalPlugin(this).bindChannel(flutterEngine)

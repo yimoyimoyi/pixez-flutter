@@ -28,6 +28,7 @@ import 'package:pixez/page/hello/setting/setting_quality_page.dart';
 import 'package:pixez/page/login/token_page.dart';
 import 'package:pixez/page/webview/webview_page.dart';
 import 'package:pixez/er/login_proxy.dart';
+import 'package:pixez/er/pixiv_vpn_plugin.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class LoginPage extends StatefulWidget {
@@ -188,12 +189,16 @@ class _LoginPageState extends State<LoginPage> {
       if (result == "OK") Leader.pushUntilHome(context);
       return;
     }
-    // Android: LoginProxy 本地反向代理后 WebView
+    // Android: VpnService DNS 劫持 + LoginProxy HTTPS 代理
     try {
       var finalUrl = url;
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await LoginProxy.start();
-        finalUrl = LoginProxy.proxyUrl(url);
+        // 启动 VPN（DNS 劫持 *.pixiv.net → 127.0.0.1）
+        final vpnResult = await PixivVpnPlugin.start();
+        // 启动 HTTPS 代理（TLS 终结 + rhttp compat 转发）
+        await LoginProxy.startHttps();
+        // WebView 加载真实 Pixiv URL（DNS 被劫持到本地代理）
+        finalUrl = url;
       }
       await Leader.push(context, WebViewPage(url: finalUrl));
     } catch (e) {

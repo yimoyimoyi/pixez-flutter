@@ -12,6 +12,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
+import 'package:pixez/er/login_cert.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:rhttp/rhttp.dart' as r;
@@ -21,7 +22,9 @@ class LoginProxy {
   static Dio? _dio;
 
   static int get port => 9876;
+  static int get httpsPort => 8443;
 
+  /// HTTP 代理（回退用，reCAPTCHA 不可用）
   static Future<void> start() async {
     if (_server != null) return;
 
@@ -30,13 +33,35 @@ class LoginProxy {
     );
     _dio = Dio();
     _dio!.httpClientAdapter = ConversionLayerAdapter(client);
-    // 关键：不跟随重定向，让 WebView 处理（参考 Workers redirect:'manual'）
     _dio!.options.followRedirects = false;
     _dio!.options.maxRedirects = 999;
     _dio!.options.validateStatus = (_) => true;
 
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
-    LPrinter.d("LoginProxy started on 127.0.0.1:$port");
+    LPrinter.d("LoginProxy HTTP started on 127.0.0.1:$port");
+    _server!.listen(_handleRequest);
+  }
+
+  /// HTTPS 代理（VpnService DNS 劫持模式，reCAPTCHA 可用）
+  static Future<void> startHttps() async {
+    if (_server != null) return;
+
+    final client = await r.RhttpCompatibleClient.createSync(
+      settings: PixezNetworkSettings.compatible(),
+    );
+    _dio = Dio();
+    _dio!.httpClientAdapter = ConversionLayerAdapter(client);
+    _dio!.options.followRedirects = false;
+    _dio!.options.maxRedirects = 999;
+    _dio!.options.validateStatus = (_) => true;
+
+    final ctx = LoginCert.createContext();
+    _server = await HttpServer.bindSecure(
+      InternetAddress.loopbackIPv4,
+      httpsPort,
+      ctx,
+    );
+    LPrinter.d("LoginProxy HTTPS started on 127.0.0.1:$httpsPort");
     _server!.listen(_handleRequest);
   }
 

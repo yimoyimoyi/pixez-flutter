@@ -5,6 +5,7 @@ import 'package:pixez/custom_tab_plugin.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/er/login_proxy.dart';
+import 'package:pixez/er/pixiv_vpn_plugin.dart';
 
 class WebViewPage extends StatefulWidget {
   final String url;
@@ -75,6 +76,7 @@ javascript:(function() {
   @override
   void dispose() {
     LoginProxy.stop();
+    PixivVpnPlugin.stop();
     super.dispose();
   }
 
