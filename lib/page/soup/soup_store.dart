@@ -93,85 +93,73 @@ abstract class _SoupStoreBase with Store {
   }
 
   _fetchEn(url) async {
-    Response response = await dio.request(url);
-    print('SoupStore _fetchEn status: ${response.statusCode}');
-    final body = response.data.toString();
-    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 300 ? body.length : 300)}');
-    var document = parse(body);
-    amWorks.clear();
-    description = '';
-
-    final articles = document.getElementsByTagName('article');
-    if (articles.isEmpty) {
-      print('SoupStore: no <article> found');
-      errorMessage = '页面结构异常，未找到文章内容';
-      return;
-    }
-    final article = articles.first;
-
-    final amBodyList = article.getElementsByClassName('am__body');
-    if (amBodyList.isEmpty) {
-      print('SoupStore: no .am__body found, classes on article children:');
-      for (var c in article.children) {
-        print('  child class: ${c.attributes["class"]}');
-      }
-      errorMessage = '文章结构已更新，请联系开发者';
-      return;
-    }
-
-    var nodes = amBodyList.first.children;
-
-    if (nodes.isNotEmpty && nodes.first.attributes['class']!.contains('_feature')) {
-      nodes = nodes.first.children;
-    } else {
-      final headers = article.getElementsByTagName('header');
-      if (headers.isNotEmpty) {
-        description = headers.first.toTargetString();
+    final works = await _fetchAndParseBody(url);
+    if (works != null) {
+      for (var work in works) {
+        _parseAmWork(work);
       }
     }
-
-    _parseIllustNodes(nodes);
   }
 
   _fetchCNTW(url) async {
-    Response response = await dio.request(url);
-    print('SoupStore _fetchCNTW status: ${response.statusCode}');
+    final works = await _fetchAndParseBody(url);
+    if (works != null) {
+      for (var work in works) {
+        _parseAmWork(work);
+      }
+    }
+  }
+
+  /// 请求 HTML 并提取所有 .am__work 元素
+  /// 返回 null 表示出错（errorMessage 已设置）
+  Future<List<Element>?> _fetchAndParseBody(String url) async {
+    final response = await dio.request(url);
+    print('SoupStore status: ${response.statusCode}');
     final body = response.data.toString();
     print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 300 ? body.length : 300)}');
     var document = parse(body);
     amWorks.clear();
     description = '';
 
-    final articles = document.getElementsByTagName('article');
-    if (articles.isEmpty) {
-      print('SoupStore: no <article> found');
-      errorMessage = '页面结构异常，未找到文章内容';
-      return;
-    }
-    final article = articles.first;
+    // 直接用 CSS selector 找所有 .am__work，绕过 DOM 结构遍历
+    final workElements = document.querySelectorAll('.am__work');
+    print('SoupStore: found ${workElements.length} .am__work elements');
 
-    final amBodyList = article.getElementsByClassName('am__body');
-    if (amBodyList.isEmpty) {
-      print('SoupStore: no .am__body found, article children classes:');
-      for (var c in article.children) {
-        print('  ${c.attributes["class"]}');
+    if (workElements.isEmpty) {
+      // 回退：尝试旧版 .illust 结构
+      final illustNodes = document.querySelectorAll('.illust');
+      print('SoupStore: falling back to .illust, found ${illustNodes.length}');
+      if (illustNodes.isEmpty) {
+        // 打印 body 中的主要内容标签帮助调试
+        final allDivs = document.getElementsByTagName('div');
+        final classes = <String>{};
+        for (var d in allDivs) {
+          final c = d.attributes['class'];
+          if (c != null && (c.contains('work') || c.contains('illust') || c.contains('article') || c.contains('am_'))) {
+            classes.add(c);
+          }
+        }
+        print('SoupStore: relevant classes found: $classes');
+        errorMessage = '文章结构已更新，请联系开发者';
+        return null;
       }
-      errorMessage = '文章结构已更新，请联系开发者';
-      return;
+      // 旧版结构
+      for (var node in illustNodes) {
+        _parseOldIllust(node);
+      }
+      return null; // 已经解析完毕，返回 null 防止二次解析
     }
 
-    var nodes = amBodyList.first.children;
-
-    if (nodes.isNotEmpty && nodes.first.attributes['class']!.contains('_feature')) {
-      nodes = nodes.first.children;
-    } else {
-      final headers = article.getElementsByTagName('header');
-      if (headers.isNotEmpty) {
-        description = headers.first.toTargetString();
+    // 提取 header 描述
+    final headers = document.querySelectorAll('header');
+    for (var h in headers) {
+      if (h.attributes['class']?.contains('am__header') ?? false) {
+        description = h.toTargetString();
+        break;
       }
     }
 
-    _parseIllustNodes(nodes);
+    return workElements;
   }
 
   /// 从 DOM 节点列表中提取插画信息
