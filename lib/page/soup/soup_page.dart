@@ -121,6 +121,22 @@ class _SoupPageState extends State<SoupPage> {
               Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                   textAlign: TextAlign.center),
+              if (_soupStore.logText.isNotEmpty) ...[
+                SizedBox(height: 8),
+                Container(
+                  constraints: BoxConstraints(maxHeight: 200),
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(_soupStore.logText,
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700,
+                            fontFamily: 'monospace')),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
