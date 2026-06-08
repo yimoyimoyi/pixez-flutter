@@ -90,7 +90,8 @@ class LoginProxy {
         options: Options(
           method: request.method,
           responseType: ResponseType.bytes,
-        )..headers!.addAll(headers),
+          headers: headers,
+        ),
       );
 
       final statusCode = response.statusCode ?? 502;
@@ -143,9 +144,14 @@ class LoginProxy {
     } catch (e, stack) {
       LPrinter.d("Proxy error: $e\n$stack");
       try {
-        request.response.statusCode = 502;
+        request.response
+          ..statusCode = 502
+          ..headers.set('content-type', 'text/plain; charset=utf-8')
+          ..write('Proxy Error: $e');
         await request.response.close();
-      } catch (_) {}
+      } catch (_) {
+        try { await request.response.close(); } catch (_) {}
+      }
     }
   }
 
