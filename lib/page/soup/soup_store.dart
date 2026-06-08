@@ -59,27 +59,43 @@ abstract class _SoupStoreBase with Store {
   @observable
   String? description;
 
+  @observable
+  String? errorMessage;
+
   @action
   fetch(String url) async {
     try {
+      errorMessage = null;
       dio = await _createDio();
       if (userSetting.languageNum == 0 || userSetting.languageNum >= 5) {
-        _fetchEn(url);
+        await _fetchEn(url);
       } else {
-        _fetchCNTW(url);
+        await _fetchCNTW(url);
       }
     } on DioException catch (e) {
-      final msg = e.response?.statusCode == 404
+      errorMessage = e.response?.statusCode == 404
           ? '404 NOT FOUND'
-          : '特辑加载失败：${e.type.name}';
-      BotToast.showText(text: msg);
-    } catch (e) {}
+          : '网络错误：${e.type.name}';
+      BotToast.showText(text: errorMessage!);
+      print('SoupStore DioException: ${e.type.name} ${e.message}');
+    } catch (e) {
+      errorMessage = '加载失败：$e';
+      print('SoupStore error: $e');
+      BotToast.showText(text: '特辑加载失败');
+    }
   }
 
   _fetchEn(url) async {
     Response response = await dio.request(url);
     var document = parse(response.data);
     amWorks.clear();
+
+    final articles = document.getElementsByTagName('article');
+    if (articles.isEmpty) {
+      print('SoupStore: no <article> found in HTML');
+      print('SoupStore: body preview = ${response.data.toString().substring(0, 500)}');
+      return;
+    }
 
     var nodes = document
         .getElementsByTagName("article")

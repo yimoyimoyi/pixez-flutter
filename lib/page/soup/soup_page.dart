@@ -118,7 +118,7 @@ class _SoupPageState extends State<SoupPage> {
               Text('正文加载失败',
                   style: TextStyle(color: Colors.grey)),
               SizedBox(height: 4),
-              Text('加载失败，请检查网络连接后重试',
+              Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                   textAlign: TextAlign.center),
             ],
