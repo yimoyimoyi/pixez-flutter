@@ -66,34 +66,42 @@ abstract class _SoupStoreBase with Store {
   fetch(String url) async {
     try {
       errorMessage = null;
+      amWorks.clear();
+      description = null;
       dio = await _createDio();
       if (userSetting.languageNum == 0 || userSetting.languageNum >= 5) {
         await _fetchEn(url);
       } else {
         await _fetchCNTW(url);
       }
+      // 请求和解析都成功但没提取到内容
+      if (amWorks.isEmpty && errorMessage == null) {
+        errorMessage = '文章结构解析失败，可能页面已更新';
+        print('SoupStore: amWorks empty after successful fetch');
+      }
     } on DioException catch (e) {
       errorMessage = e.response?.statusCode == 404
           ? '404 NOT FOUND'
           : '网络错误：${e.type.name}';
-      BotToast.showText(text: errorMessage!);
       print('SoupStore DioException: ${e.type.name} ${e.message}');
     } catch (e) {
-      errorMessage = '加载失败：$e';
+      errorMessage = '异常：$e';
       print('SoupStore error: $e');
-      BotToast.showText(text: '特辑加载失败');
     }
   }
 
   _fetchEn(url) async {
     Response response = await dio.request(url);
-    var document = parse(response.data);
+    print('SoupStore _fetchEn status: ${response.statusCode}');
+    final body = response.data.toString();
+    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 200 ? body.length : 200)}');
+    var document = parse(body);
     amWorks.clear();
 
     final articles = document.getElementsByTagName('article');
     if (articles.isEmpty) {
-      print('SoupStore: no <article> found in HTML');
-      print('SoupStore: body preview = ${response.data.toString().substring(0, 500)}');
+      print('SoupStore: no <article> found, body preview: ${body.substring(0, body.length < 500 ? body.length : 500)}');
+      errorMessage = '页面结构异常，未找到文章内容';
       return;
     }
 
@@ -155,7 +163,10 @@ abstract class _SoupStoreBase with Store {
 
   _fetchCNTW(url) async {
     Response response = await dio.request(url);
-    var document = parse(response.data);
+    print('SoupStore _fetchCNTW status: ${response.statusCode}');
+    final body = response.data.toString();
+    print('SoupStore body length: ${body.length}, preview: ${body.substring(0, body.length < 200 ? body.length : 200)}');
+    var document = parse(body);
     amWorks.clear();
 
     var nodes = document
