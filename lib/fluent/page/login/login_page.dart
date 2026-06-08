@@ -89,34 +89,34 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(
                     children: <Widget>[
                       SizedBox(height: 10),
-                      // 1) 外部浏览器
-                      Button(
+                      // 1) 内部 WebView 登录 — 兼容模式本地代理
+                      FilledButton(
                         child: Text(I18n.of(context).login),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchExternal(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 4),
-                      Button(
+                      FilledButton(
                         child: Text(I18n.of(context).dont_have_account),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl(create: true);
-                            _launchExternal(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 8),
-                      // 2) 内部 WebView
+                      // 2) 外部浏览器
                       Button(
-                        child: Text("内部 WebView"),
+                        child: Text("外部浏览器"),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchWebView(url);
+                            _launchExternal(url);
                           } catch (e) {}
                         },
                       ),

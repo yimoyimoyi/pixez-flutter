@@ -89,14 +89,14 @@ class _LoginPageState extends State<LoginPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       SizedBox(height: 10),
-                      // 1) 外部浏览器登录 — 利用系统代理/VPN
+                      // 1) 内部 WebView 登录 — 兼容模式本地代理
                       FilledButton.icon(
-                        icon: Icon(Icons.open_in_browser),
+                        icon: Icon(Icons.web),
                         label: Text(I18n.of(context).login),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchExternal(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
@@ -107,19 +107,19 @@ class _LoginPageState extends State<LoginPage> {
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl(create: true);
-                            _launchExternal(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 12),
-                      // 2) 内部 WebView 登录 — 兼容模式本地代理
+                      // 2) 外部浏览器
                       OutlinedButton.icon(
-                        icon: Icon(Icons.web),
-                        label: Text("内部 WebView"),
+                        icon: Icon(Icons.open_in_browser),
+                        label: Text("外部浏览器"),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchWebView(url);
+                            _launchExternal(url);
                           } catch (e) {}
                         },
                       ),
