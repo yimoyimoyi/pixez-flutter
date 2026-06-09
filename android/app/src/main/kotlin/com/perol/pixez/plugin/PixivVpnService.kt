@@ -95,6 +95,7 @@ class PixivVpnService : VpnService() {
 
     private fun startVpn() {
         if (isRunning) return
+        Log.d("PixivVPN", "startVpn: building TUN interface...")
         val builder = Builder()
             .setSession("PixEz VPN")
             .addAddress(VPN_ADDRESS, 32)
@@ -102,10 +103,16 @@ class PixivVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
             .setMtu(1500)
             .setBlocking(true)
-        tunFd = builder.establish() ?: run { stopSelf(); return }
+        tunFd = builder.establish()
+        if (tunFd == null) {
+            Log.e("PixivVPN", "startVpn: establish() returned null!")
+            stopSelf(); return
+        }
+        Log.d("PixivVPN", "startVpn: TUN established, fd=${tunFd!!.fd}")
         tunInput = FileInputStream(tunFd!!.fileDescriptor)
         tunOutput = FileOutputStream(tunFd!!.fileDescriptor)
         isRunning = true
+        Log.d("PixivVPN", "startVpn: starting packet processing loop")
         scope.launch { processPackets() }
         scope.launch { cleanupSessions() }
     }
@@ -126,12 +133,27 @@ class PixivVpnService : VpnService() {
 
     // ============ 主处理循环 ============
 
+    private var packetCount = 0L
+
     private fun processPackets() {
         val buf = ByteArray(32767)
+        Log.d("PixivVPN", "processPackets: loop started")
         try {
             while (isRunning) {
                 val len = tunInput?.read(buf) ?: -1
-                if (len <= 0) continue
+                if (len <= 0) {
+                    if (len < 0) Log.d("PixivVPN", "processPackets: read returned $len, breaking")
+                    if (len == 0) continue
+                    break
+                }
+                packetCount++
+                if (packetCount <= 5 || packetCount % 100 == 0L) {
+                    val ipVer = (buf[0].toInt() shr 4) and 0x0F
+                    val proto = buf[9].toInt() and 0xFF
+                    val srcI = buf.getIntAt(12)
+                    val dstI = buf.getIntAt(16)
+                    Log.d("PixivVPN", "pkt #$packetCount: IPv$ipVer proto=$proto src=${srcI.toIPv4()} dst=${dstI.toIPv4()} len=$len")
+                }
 
                 val ipHdrLen = (buf[0].toInt() and 0x0F) * 4
                 if (ipHdrLen < 20 || len < ipHdrLen) continue
@@ -145,7 +167,10 @@ class PixivVpnService : VpnService() {
                     UDP_PROTOCOL -> handleUdp(buf, len, ipHdrLen, srcIp, dstIp)
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.e("PixivVPN", "processPackets error: ${e.message}", e)
+        }
+        Log.d("PixivVPN", "processPackets: loop ended, packets=$packetCount")
     }
 
     // ============ UDP / DNS 劫持 ============
