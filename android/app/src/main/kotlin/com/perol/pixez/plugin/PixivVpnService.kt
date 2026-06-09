@@ -470,13 +470,28 @@ class PixivVpnService : VpnService() {
         return sb.toString().lowercase()
     }
 
+    /** 计算 DNS 查询中 QNAME 的 wire format 长度（从 offset 到 0x00） */
+    private fun dnsNameWireLen(data: ByteArray, offset: Int): Int {
+        var pos = offset
+        while (pos < data.size) {
+            val len = data[pos].toInt() and 0xFF
+            if (len == 0) return pos - offset + 1 // +1 for null terminator
+            if (len and 0xC0 == 0xC0) return pos - offset + 2 // compressed pointer
+            pos += len + 1
+        }
+        return pos - offset
+    }
+
     private fun buildDnsResponse(
         pkt: ByteArray, len: Int, ipHdr: Int,
         srcIp: Int, dstIp: Int,
         dnsData: ByteArray, qname: String
     ): ByteArray {
-        val ansLen = 16 // A record: name ptr(2) + type(2) + class(2) + ttl(4) + rdlen(2) + ip(4)
-        val respDnsLen = dnsData.size + ansLen
+        // 计算 wire format question 长度
+        val nameLen = dnsNameWireLen(dnsData, 12)
+        val qTotalLen = 12 + nameLen + 4 // header(12) + qname(wire) + qtype(2) + qclass(2)
+        val ansLen = 16
+        val respDnsLen = qTotalLen + ansLen
         val udpLen = 8 + respDnsLen
         val total = IP_HEADER_LEN + udpLen
         val resp = ByteArray(total)
@@ -489,31 +504,30 @@ class PixivVpnService : VpnService() {
         resp[9] = UDP_PROTOCOL.toByte()
         resp.setIntAt(12, dstIp)
         resp.setIntAt(16, srcIp)
+        val ipCsum = ipChecksum(resp, 0, IP_HEADER_LEN)
+        resp.setUShortAt(10, ipCsum)
 
-        // UDP 头: 交换端口
-        val origSrcPort = pkt.getUShortAt(ipHdr)
-        val origDstPort = pkt.getUShortAt(ipHdr + 2)
-        resp.setUShortAt(IP_HEADER_LEN, origDstPort)
-        resp.setUShortAt(IP_HEADER_LEN + 2, origSrcPort)
-        resp.setUShortAt(IP_HEADER_LEN + 4, udpLen)
+        // UDP 头
+        val udpOff = IP_HEADER_LEN
+        resp.setUShortAt(udpOff, pkt.getUShortAt(ipHdr + 2)) // src = orig dst port
+        resp.setUShortAt(udpOff + 2, pkt.getUShortAt(ipHdr)) // dst = orig src port
+        resp.setUShortAt(udpOff + 4, udpLen)
 
         // DNS 响应
-        val dnsOff = IP_HEADER_LEN + 8
-        System.arraycopy(dnsData, 0, resp, dnsOff, 2) // TXID
-        resp[dnsOff + 2] = 0x81.toByte(); resp[dnsOff + 3] = 0x80.toByte() // flags
-        System.arraycopy(dnsData, 4, resp, dnsOff + 4, 2) // QDCOUNT
-        resp[dnsOff + 6] = dnsData[4]; resp[dnsOff + 7] = dnsData[5] // ANCOUNT = QDCOUNT
-        // 复制问题
-        val qLen = 12 + qname.length + 6
-        System.arraycopy(dnsData, 12, resp, dnsOff + 12, qLen - 12)
+        val dnsOff = udpOff + 8
+        System.arraycopy(dnsData, 0, resp, dnsOff, 2)       // TXID
+        resp[dnsOff + 2] = 0x81.toByte(); resp[dnsOff + 3] = 0x80.toByte() // flags: response
+        System.arraycopy(dnsData, 4, resp, dnsOff + 4, 6)    // QDCOUNT + ANCOUNT(=QDCOUNT) + NSCOUNT(0) + ARCOUNT(0)
+        // 复制完整 question section（包括 qname wire format + qtype + qclass）
+        System.arraycopy(dnsData, 12, resp, dnsOff + 12, qTotalLen - 12)
 
-        // 答案: A 记录指向 10.0.0.1
-        val ansOff = dnsOff + qLen + 4 // +4 for the 2 authority/additional 0 counts
-        resp[ansOff] = 0xC0.toByte(); resp[ansOff + 1] = 0x0C.toByte() // 域名指针
+        // 答案: A 记录 10.0.0.1
+        val ansOff = dnsOff + qTotalLen
+        resp[ansOff] = 0xC0.toByte(); resp[ansOff + 1] = 0x0C.toByte() // 域名指针 → offset 12
         resp.setUShortAt(ansOff + 2, 1)   // Type A
         resp.setUShortAt(ansOff + 4, 1)   // Class IN
         resp.setUIntAt(ansOff + 6, 60)    // TTL 60s
-        resp.setUShortAt(ansOff + 10, 4)  // Data length
+        resp.setUShortAt(ansOff + 10, 4)  // Data length = 4
         resp[ansOff + 12] = 10; resp[ansOff + 13] = 0
         resp[ansOff + 14] = 0; resp[ansOff + 15] = 1 // 10.0.0.1
 
