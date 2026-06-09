@@ -209,17 +209,44 @@ class _SearchPageState extends State<SearchPage>
                 builder: (BuildContext context) {
                   final targetTags = tagHistoryStore.tags
                       .where((e) => e.type == null || e.type == 0)
-                      .take(50)  // 最多加载 50 条，避免 Observer 全量遍历
                       .toList();
                   if (targetTags.isEmpty) return Container();
 
-                  // 始终限制显示 12 条 + 展开按钮
                   const maxShow = 12;
                   final showAll = targetTags.length <= maxShow || _tagExpand;
                   final displayTags = showAll
                       ? targetTags
                       : targetTags.sublist(0, maxShow);
 
+                  // 展开后大量标签用 ListView 虚拟化
+                  if (showAll && targetTags.length > 30) {
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      itemCount: targetTags.length + 1,
+                      itemBuilder: (ctx, i) {
+                        if (i == targetTags.length) {
+                          return Padding(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 4),
+                            child: ActionChip(
+                              label: Icon(Icons.expand_less),
+                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              onPressed: () =>
+                                  setState(() => _tagExpand = false),
+                            ),
+                          );
+                        }
+                        return Container(
+                          margin: EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          child: buildActionChip(targetTags[i], context),
+                        );
+                      },
+                    );
+                  }
+
+                  // 折叠态或少量标签用 Wrap
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 5.0),
                     child: Wrap(

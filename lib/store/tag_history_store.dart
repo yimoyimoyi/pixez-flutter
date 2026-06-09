@@ -33,9 +33,6 @@ abstract class _TagHistoryStoreBase with Store {
   TagsPersistProvider tagsPersistProvider = TagsPersistProvider();
   ObservableList<TagsPersist> tags = ObservableList();
 
-  /// 最大保留标签数，超出则删除最旧的
-  static const _maxTags = 100;
-
   /// 确保数据库已打开，避免多次 open 的 I/O 开销
   Future<void> _ensureOpen() async {
     await tagsPersistProvider.open();
@@ -62,12 +59,6 @@ abstract class _TagHistoryStoreBase with Store {
     tagsPersist.type = Constants.type;
     await tagsPersistProvider.insert(tagsPersist);
     tags.insert(0, tagsPersist);
-
-    // 超出上限时删除最旧的
-    while (tags.length > _maxTags) {
-      final last = tags.removeLast();
-      await tagsPersistProvider.delete(last.id!);
-    }
   }
 
   @action
