@@ -1,77 +1,48 @@
 /// V2Ray 配置生成器
 ///
-/// 生成无节点 V2Ray 配置：
-/// - TUN 入口（VPN 模式）
-/// - freedom outbound（直连）
-/// - HTTP outbound → LoginProxy:9876（Pixiv 流量）
-/// - DNS 使用标准公共 DNS
+/// flutter_v2ray 原生端会创建 TUN 接口。
+/// Xray 仅需要 socks 入口 + 路由规则。
 library;
 
 import 'dart:convert';
 
 class V2RayConfig {
   /// 生成 V2Ray JSON 配置字符串
-  /// [proxyPort] LoginProxy 的 HTTP 端口（默认 9876）
-  /// [directDns] 非 Pixiv 域名使用的 DNS
-  static String generate({int proxyPort = 9876, String directDns = '1.1.1.1'}) {
+  /// flutter_v2ray 原生端创建 TUN，Xray 只处理 socks 入口 + 路由
+  static String generate({int proxyPort = 9876}) {
     final config = {
       'log': {'loglevel': 'warning'},
       'inbounds': [
         {
-          'tag': 'tun-in',
-          'protocol': 'tun',
-          'settings': {
-            'dev': 'tun0',
-            'mtu': 1500,
-            'gateway': '10.0.0.1',
-            'dns': '1.1.1.1',
-          },
+          'tag': 'socks-in',
+          'protocol': 'socks',
+          'listen': '127.0.0.1',
+          'port': 10808,
           'sniffing': {
             'enabled': true,
             'destOverride': ['http', 'tls'],
           },
         },
-        {
-          'tag': 'dns-in',
-          'protocol': 'dokodemo-door',
-          'port': 53,
-          'listen': '127.0.0.1',
-          'settings': {
-            'address': directDns,
-            'port': 53,
-            'network': 'udp',
-          },
-        },
       ],
       'outbounds': [
-        {
-          'tag': 'direct',
-          'protocol': 'freedom',
-          'settings': {},
-        },
         {
           'tag': 'pixiv-proxy',
           'protocol': 'http',
           'settings': {
             'servers': [
-              {
-                'address': '127.0.0.1',
-                'port': proxyPort,
-              }
+              {'address': '127.0.0.1', 'port': proxyPort},
             ],
           },
         },
-        // DNS outbound uses direct
         {
-          'tag': 'dns-out',
-          'protocol': 'dns',
+          'tag': 'direct',
+          'protocol': 'freedom',
           'settings': {},
         },
       ],
       'routing': {
-        'domainStrategy': 'IPOnDemand',
+        'domainStrategy': 'IPIfNonMatch',
         'rules': [
-          // Pixiv 域名 → HTTP 代理
           {
             'type': 'field',
             'domain': [
@@ -82,35 +53,23 @@ class V2RayConfig {
             ],
             'outboundTag': 'pixiv-proxy',
           },
-          // DNS 直通
-          {
-            'type': 'field',
-            'inboundTag': ['dns-in'],
-            'outboundTag': 'dns-out',
-          },
-          // 所有其他流量直连
-          {
-            'type': 'field',
-            'network': 'udp',
-            'outboundTag': 'direct',
-          },
           {
             'type': 'field',
             'network': 'tcp',
             'outboundTag': 'direct',
           },
+          {
+            'type': 'field',
+            'network': 'udp',
+            'outboundTag': 'direct',
+          },
         ],
       },
       'dns': {
-        'servers': [
-          directDns,
-          '8.8.8.8',
-          'localhost',
-        ],
+        'servers': ['1.1.1.1', '8.8.8.8'],
         'queryStrategy': 'UseIPv4',
       },
     };
-
     return jsonEncode(config);
   }
 }
