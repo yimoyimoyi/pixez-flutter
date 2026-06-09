@@ -45,6 +45,9 @@ abstract class _SoupStoreBase with Store {
   @observable
   String logText = '';
 
+  @observable
+  bool isLoading = false;
+
   void _log(String msg) {
     print('SoupStore: $msg');
     logText += '$msg\n';
@@ -94,6 +97,7 @@ abstract class _SoupStoreBase with Store {
     errorMessage = null;
     amWorks.clear();
     description = null;
+    isLoading = true;
     _log('fetch start, url=$url');
 
     try {
@@ -106,6 +110,8 @@ abstract class _SoupStoreBase with Store {
     } catch (e, st) {
       errorMessage = '异常：$e';
       _log('error: $e\n$st');
+    } finally {
+      isLoading = false;
     }
 
     if (amWorks.isEmpty && errorMessage == null) {

@@ -106,6 +106,9 @@ class _SoupPageState extends State<SoupPage> {
   }
 
   Widget buildBlocProvider() {
+    if (_soupStore.isLoading) {
+      return Center(child: ProgressRing());
+    }
     if (_soupStore.amWorks.isEmpty) {
       return Center(
         child: Padding(

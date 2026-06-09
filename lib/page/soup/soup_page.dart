@@ -118,6 +118,12 @@ class _SoupPageState extends State<SoupPage> {
   }
 
   Widget buildBlocProvider() {
+    // 加载中：显示加载动画，不显示错误
+    if (_soupStore.isLoading) {
+      return Center(child: CircularProgressIndicator());
+    }
+
+    // 加载完成但无内容：显示错误
     if (_soupStore.amWorks.isEmpty) {
       return Center(
         child: Padding(
