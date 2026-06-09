@@ -90,6 +90,33 @@ class _SoupPageState extends State<SoupPage> {
     );
   }
 
+  void _showLogDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(children: [
+          Icon(Icons.bug_report, size: 18),
+          SizedBox(width: 8),
+          Text('调试日志', style: TextStyle(fontSize: 16)),
+        ]),
+        content: Container(
+          constraints: BoxConstraints(maxHeight: 400),
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(_soupStore.logText,
+                style: TextStyle(fontSize: 10, fontFamily: 'monospace')),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildBlocProvider() {
     if (_soupStore.amWorks.isEmpty) {
       return Center(
@@ -122,19 +149,12 @@ class _SoupPageState extends State<SoupPage> {
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                   textAlign: TextAlign.center),
               if (_soupStore.logText.isNotEmpty) ...[
-                SizedBox(height: 8),
-                Container(
-                  constraints: BoxConstraints(maxHeight: 200),
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(_soupStore.logText,
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700,
-                            fontFamily: 'monospace')),
-                  ),
+                SizedBox(height: 12),
+                TextButton.icon(
+                  icon: Icon(Icons.bug_report, size: 14),
+                  label: Text('显示调试日志',
+                      style: TextStyle(fontSize: 12)),
+                  onPressed: () => _showLogDialog(context),
                 ),
               ],
             ],

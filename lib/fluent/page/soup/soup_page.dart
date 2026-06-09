@@ -15,6 +15,7 @@
  */
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart' show Colors, SelectableText;
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/fluent/component/painter_avatar.dart';
 import 'package:pixez/fluent/component/pixez_button.dart';
@@ -49,6 +50,33 @@ class _SoupPageState extends State<SoupPage> {
   void initState() {
     _soupStore.fetch(widget.url);
     super.initState();
+  }
+
+  void _showLogDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: Row(children: [
+          Icon(FluentIcons.bug, size: 18),
+          SizedBox(width: 8),
+          Text('调试日志', style: TextStyle(fontSize: 16)),
+        ]),
+        content: Container(
+          constraints: BoxConstraints(maxHeight: 400),
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(_soupStore.logText,
+                style: TextStyle(fontSize: 10, fontFamily: 'monospace')),
+          ),
+        ),
+        actions: [
+          Button(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -102,8 +130,17 @@ class _SoupPageState extends State<SoupPage> {
               ],
               Icon(FluentIcons.cloud, size: 48),
               SizedBox(height: 12),
-              Text('正文加载失败，请检查网络连接后重试',
+              Text('正文加载失败'),
+              SizedBox(height: 4),
+              Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
                   textAlign: TextAlign.center),
+              if (_soupStore.logText.isNotEmpty) ...[
+                SizedBox(height: 12),
+                Button(
+                  child: Text('显示调试日志'),
+                  onPressed: () => _showLogDialog(context),
+                ),
+              ],
             ],
           ),
         ),
