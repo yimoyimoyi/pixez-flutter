@@ -29,6 +29,8 @@ import 'package:pixez/page/login/token_page.dart';
 import 'package:pixez/page/webview/webview_page.dart';
 import 'package:pixez/er/login_proxy.dart';
 import 'package:pixez/er/pixiv_vpn_plugin.dart';
+import 'package:pixez/er/v2ray_config.dart';
+import 'package:pixez/er/v2ray_manager.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class LoginPage extends StatefulWidget {
@@ -212,7 +214,7 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  /// VpnService DNS 劫持登录 — 实验性，HTTPS 代理 + 真实域名
+  /// V2Ray VPN 登录 — 无节点路由，Pixiv 走 LoginProxy，其他直连
   Future<void> _launchVpnWebView(String url) async {
     if (Platform.isIOS || Platform.isMacOS) {
       final result = await Leader.push(context, WebViewPage(url: url));
@@ -221,9 +223,19 @@ class _LoginPageState extends State<LoginPage> {
     }
     try {
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await PixivVpnPlugin.start();
+        // 1. 启动 LoginProxy HTTPS
         await LoginProxy.startHttps();
+
+        // 2. 启动 V2Ray VPN（无节点，纯本地路由）
+        final config = V2RayConfig.generate();
+        final ok = await V2RayManager.start(config: config);
+        if (!ok) {
+          BotToast.showText(text: "VPN 权限未授予");
+          await LoginProxy.stop();
+          return;
+        }
       }
+      // 3. WebView 加载真实 URL（DNS/traffic 由 V2Ray 处理）
       await Leader.push(context, WebViewPage(url: url));
     } catch (e) {
       BotToast.showText(text: "VPN 登录失败: $e");

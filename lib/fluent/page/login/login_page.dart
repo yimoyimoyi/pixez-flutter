@@ -25,6 +25,8 @@ import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/er/login_proxy.dart';
 import 'package:pixez/er/pixiv_vpn_plugin.dart';
+import 'package:pixez/er/v2ray_config.dart';
+import 'package:pixez/er/v2ray_manager.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -195,8 +197,14 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _launchVpnWebView(String url) async {
     try {
       if (userSetting.networkMode.usesCompatibleConnection) {
-        await PixivVpnPlugin.start();
         await LoginProxy.startHttps();
+        final config = V2RayConfig.generate();
+        final ok = await V2RayManager.start(config: config);
+        if (!ok) {
+          BotToast.showText(text: "VPN 权限未授予");
+          await LoginProxy.stop();
+          return;
+        }
       }
       await Leader.push(
         context,

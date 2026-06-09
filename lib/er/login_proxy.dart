@@ -7,11 +7,13 @@
 /// 示例: http://127.0.0.1:9876/app-api.pixiv.net/web/v1/login?code_challenge=...
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
+import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/login_cert.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
@@ -76,8 +78,83 @@ class LoginProxy {
     LPrinter.d("LoginProxy stopped");
   }
 
+  /// 处理 V2Ray HTTP outbound 的 CONNECT 请求
+  /// 格式: CONNECT app-api.pixiv.net:443 HTTP/1.1
+  static Future<void> _handleConnect(HttpRequest request) async {
+    final target = request.uri.toString(); // "app-api.pixiv.net:443"
+    final idx = target.lastIndexOf(':');
+    if (idx <= 0 || idx >= target.length - 1) {
+      request.response.statusCode = 400;
+      await request.response.close();
+      return;
+    }
+    final host = target.substring(0, idx);
+    final port = int.parse(target.substring(idx + 1));
+    LPrinter.d("CONNECT $host:$port");
+
+    try {
+      // 发送 200 Connection Established
+      request.response.statusCode = 200;
+      request.response.headers.set('connection', 'keep-alive');
+      await request.response.flush();
+
+      // 获取底层 raw TCP socket
+      final clientSocket = await request.response.detachSocket();
+
+      // 连接到上游: pixiv 域名用源站 IP，非 pixiv 直接连
+      Socket upstreamSocket;
+      if (host.endsWith('.pixiv.net') || host == 'pixiv.net') {
+        final ips = Hoster.apiPool();
+        upstreamSocket = await Socket.connect(ips.first, port,
+            timeout: Duration(seconds: 15));
+      } else {
+        upstreamSocket = await Socket.connect(host, port,
+            timeout: Duration(seconds: 10));
+      }
+
+      // 双向字节中继
+      await Future.wait([
+        _relaySocket(clientSocket, upstreamSocket),
+        _relaySocket(upstreamSocket, clientSocket),
+      ]);
+    } catch (e) {
+      LPrinter.d("CONNECT error: $e");
+      try {
+        request.response.statusCode = 502;
+        await request.response.close();
+      } catch (_) {}
+    }
+  }
+
+  /// 单向 Socket → Socket 字节中继
+  static Future<void> _relaySocket(Socket from, Socket to) async {
+    final completer = Completer<void>();
+    from.listen(
+      (data) {
+        to.add(data);
+        to.flush();
+      },
+      onDone: () {
+        to.close();
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (_) {
+        to.close();
+        if (!completer.isCompleted) completer.complete();
+      },
+      cancelOnError: false,
+    );
+    return completer.future;
+  }
+
   static Future<void> _handleRequest(HttpRequest request) async {
     try {
+      // V2Ray HTTP outbound CONNECT 模式
+      if (request.method == 'CONNECT') {
+        await _handleConnect(request);
+        return;
+      }
+
       final parsed = _parse(request);
       if (parsed == null) {
         request.response.statusCode = 400;

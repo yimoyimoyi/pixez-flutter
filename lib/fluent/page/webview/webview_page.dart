@@ -6,6 +6,7 @@ import 'package:pixez/er/leader.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/er/login_proxy.dart';
 import 'package:pixez/er/pixiv_vpn_plugin.dart';
+import 'package:pixez/er/v2ray_manager.dart';
 
 class WebViewPage extends StatefulWidget {
   final String url;
@@ -73,6 +74,7 @@ javascript:(function() {
 
   @override
   void dispose() {
+    V2RayManager.stop();
     LoginProxy.stop();
     PixivVpnPlugin.stop();
     super.dispose();
