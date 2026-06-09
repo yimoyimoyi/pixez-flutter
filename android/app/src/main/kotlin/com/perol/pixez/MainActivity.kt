@@ -384,6 +384,7 @@ class MainActivity : FlutterActivity() {
         data: Intent?
     ) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (PixivVpnPlugin.handleActivityResult(requestCode, resultCode, data)) return
         Safer.bindResult(this, requestCode, resultCode, data)
         when (requestCode) {
             PICK_IMAGE_FILE -> if (resultCode == Activity.RESULT_OK) {
