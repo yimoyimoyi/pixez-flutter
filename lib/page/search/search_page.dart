@@ -109,7 +109,6 @@ class _SearchPageState extends State<SearchPage>
     );
   }
 
-  bool _tagExpand = false;
   int _tagPage = 0;
 
   @override
@@ -215,30 +214,6 @@ class _SearchPageState extends State<SearchPage>
 
                   const pageSize = 24;
                   final total = targetTags.length;
-                  if (total <= 0) return Container();
-
-                  // 折叠态只显示前 pageSize 条
-                  if (!_tagExpand && total > pageSize) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 5.0),
-                      child: Wrap(
-                        children: [
-                          for (var f in targetTags.take(pageSize))
-                            buildActionChip(f, context),
-                          ActionChip(
-                            label: Text('展开全部 $total 条'),
-                            padding: EdgeInsets.symmetric(horizontal: 4.0),
-                            onPressed: () =>
-                                setState(() => _tagExpand = true),
-                          ),
-                        ],
-                        runSpacing: 4.0,
-                        spacing: 5.0,
-                      ),
-                    );
-                  }
-
-                  // 展开态：分页显示
                   final maxPage = (total - 1) ~/ pageSize;
                   if (_tagPage > maxPage) _tagPage = maxPage;
                   final start = _tagPage * pageSize;
@@ -247,51 +222,52 @@ class _SearchPageState extends State<SearchPage>
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 5.0),
-                    child: Wrap(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        for (var f in pageTags)
-                          buildActionChip(f, context),
-                        // 翻页导航
-                        Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_tagPage > 0)
-                                ActionChip(
-                                  label: Text('上一页'),
-                                  padding: EdgeInsets.symmetric(horizontal: 4),
-                                  onPressed: () =>
-                                      setState(() => _tagPage--),
-                                ),
-                              Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 8),
-                                child: Text(
-                                  '${_tagPage + 1}/${maxPage + 1}',
-                                  style: TextStyle(fontSize: 12),
-                                ),
-                              ),
-                              if (_tagPage < maxPage)
-                                ActionChip(
-                                  label: Text('下一页'),
-                                  padding: EdgeInsets.symmetric(horizontal: 4),
-                                  onPressed: () =>
-                                      setState(() => _tagPage++),
-                                ),
-                              ActionChip(
-                                label: Text('收起'),
-                                padding: EdgeInsets.symmetric(horizontal: 4),
-                                onPressed: () => setState(() {
-                                  _tagExpand = false;
-                                  _tagPage = 0;
-                                }),
-                              ),
-                            ],
-                          ),
+                        Wrap(
+                          children: [
+                            for (var f in pageTags)
+                              buildActionChip(f, context),
+                          ],
+                          runSpacing: 4.0,
+                          spacing: 5.0,
                         ),
+                        if (total > pageSize)
+                          Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_tagPage > 0)
+                                  ActionChip(
+                                    label: Text('上一页'),
+                                    padding:
+                                        EdgeInsets.symmetric(horizontal: 4),
+                                    onPressed: () =>
+                                        setState(() => _tagPage--),
+                                  ),
+                                Padding(
+                                  padding:
+                                      EdgeInsets.symmetric(horizontal: 8),
+                                  child: Text(
+                                    '${_tagPage + 1}/${maxPage + 1}',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                if (_tagPage < maxPage)
+                                  ActionChip(
+                                    label: Text('下一页'),
+                                    padding:
+                                        EdgeInsets.symmetric(horizontal: 4),
+                                    onPressed: () =>
+                                        setState(() => _tagPage++),
+                                  ),
+                              ],
+                            ),
+                          ),
                       ],
-                      runSpacing: 4.0,
-                      spacing: 5.0,
                     ),
                   );
                 },
