@@ -44,7 +44,7 @@ class GoToLoginPage extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              PixivImage(illust.imageUrls.medium),
+              PixivImage(illust.illustDetailUrl),
               Row(
                 children: <Widget>[
                   Padding(

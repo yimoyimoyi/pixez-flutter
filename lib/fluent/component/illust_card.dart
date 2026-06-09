@@ -213,6 +213,11 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Widget _buildPic(String tag, bool tooLong) {
+    final url = switch (userSetting.feedPreviewQuality) {
+      0 => store.illusts!.imageUrls.medium,
+      1 => store.illusts!.imageUrls.large,
+      _ => store.illusts!.imageUrls.medium,
+    };
     return tooLong
         ? NullHero(
             tag: tag,
@@ -224,7 +229,7 @@ class _IllustCardState extends State<IllustCard> {
         : NullHero(
             tag: tag,
             child: PixivImage(
-              store.illusts!.imageUrls.medium,
+              url,
               fit: BoxFit.fitWidth,
             ),
           );
