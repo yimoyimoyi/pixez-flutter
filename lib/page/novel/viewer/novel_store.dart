@@ -89,7 +89,12 @@ abstract class _NovelStoreBase with Store {
       }
       // 2) 再取正文（HTML 解析，可能失败）
       final response = await apiClient.webviewNovel(id);
-      String json = _parseHtml(response.data)!;
+      final html = response.data is String ? response.data : response.data.toString();
+      String? json = _parseHtml(html);
+      if (json == null) {
+        errorMessage = '页面结构异常，无法解析小说正文';
+        return;
+      }
       novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
       spans = await compute(buildSpans, novelTextResponse!);
       if (novel != null) novelHistoryStore.insert(novel!);
@@ -104,13 +109,22 @@ abstract class _NovelStoreBase with Store {
 
   String? _parseHtml(String html) {
     var document = parse(html);
-    final scriptElement = document.querySelector('script')!;
+    final scriptElement = document.querySelector('script');
+    if (scriptElement == null) {
+      print('novel _parseHtml: no <script> found');
+      return null;
+    }
     String scriptContent = scriptElement.innerHtml;
-    final novelRegex = RegExp(r'novel: ({.*?}),\n\s*isOwnWork');
-    final match = novelRegex.firstMatch(scriptContent);
-    if (match != null) {
-      final novelJsonString = match.group(1);
-      return novelJsonString;
+    // 尝试多种正则匹配（Pixiv 页面结构可能变化）
+    for (final regex in [
+      RegExp(r'novel: ({.*?}),\n\s*isOwnWork'),
+      RegExp(r'novel: ({.*?})'),  // fallback
+    ]) {
+      final match = regex.firstMatch(scriptContent);
+      if (match != null) {
+        final json = match.group(1);
+        if (json != null && json.isNotEmpty) return json;
+      }
     }
     return null;
   }
@@ -137,8 +151,6 @@ class ComputeSpan {
 }
 
 Future<List<NovelSpansData>> buildSpans(NovelWebResponse webResponse) {
-  return Future.delayed(Duration(milliseconds: 100), () {
-    NovelSpansGenerator novelSpansGenerator = NovelSpansGenerator();
-    return novelSpansGenerator.buildSpans(webResponse);
-  });
+  final generator = NovelSpansGenerator();
+  return Future.value(generator.buildSpans(webResponse));
 }
