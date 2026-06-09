@@ -100,7 +100,7 @@ class PixivVpnService : VpnService() {
             .setSession("PixEz VPN")
             .addAddress(VPN_ADDRESS, 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("8.8.8.8")
+            .addDnsServer(VPN_ADDRESS)  // 使用 VPN 自身 IP 作为 DNS 服务器
             .setMtu(1500)
             .setBlocking(true)
         tunFd = builder.establish()
@@ -115,6 +115,98 @@ class PixivVpnService : VpnService() {
         Log.d("PixivVPN", "startVpn: starting packet processing loop")
         scope.launch { processPackets() }
         scope.launch { cleanupSessions() }
+        scope.launch { startDnsServer() }
+    }
+
+    // ============ 本地 DNS 服务器 ============
+
+    private suspend fun startDnsServer() {
+        try {
+            val dnsSocket = DatagramSocket(null)
+            dnsSocket.reuseAddress = true
+            dnsSocket.bind(InetSocketAddress(VPN_ADDRESS, 53))
+            dnsSocket.soTimeout = 1000
+            Log.d("PixivVPN", "DNS server listening on $VPN_ADDRESS:53")
+
+            val buf = ByteArray(1024)
+            while (isRunning) {
+                try {
+                    val packet = DatagramPacket(buf, buf.size)
+                    dnsSocket.receive(packet)
+                    handleDnsPacket(dnsSocket, packet)
+                } catch (_: java.net.SocketTimeoutException) {
+                    continue
+                }
+            }
+            dnsSocket.close()
+        } catch (e: Exception) {
+            Log.e("PixivVPN", "DNS server error: ${e.message}", e)
+        }
+    }
+
+    private fun handleDnsPacket(socket: DatagramSocket, packet: DatagramPacket) {
+        val data = packet.data
+        val qname = parseDnsName(data, 12) ?: return
+        val nameLen = dnsNameWireLen(data, 12)
+        val qtype = if (12 + nameLen + 2 <= packet.length) data.getUShortAt(12 + nameLen) else 0
+        Log.d("PixivVPN", "DNS query: $qname type=$qtype")
+
+        if (qname.endsWith(".pixiv.net")) {
+            Log.d("PixivVPN", "DNS hijack: $qname → 10.0.0.1")
+            val response = buildSimpleDnsResponse(data, packet.length, qname, qtype)
+            val respPacket = DatagramPacket(response, response.size, packet.address, packet.port)
+            socket.send(respPacket)
+        } else {
+            // 转发到 8.8.8.8
+            forwardDnsQuery(socket, packet)
+        }
+    }
+
+    private fun buildSimpleDnsResponse(query: ByteArray, qLen: Int, qname: String, qtype: Int): ByteArray {
+        val nameLen = dnsNameWireLen(query, 12)
+        val qTotal = 12 + nameLen + 4
+        val response = ByteArray(qTotal + 16) // header + question + answer
+
+        // Header
+        System.arraycopy(query, 0, response, 0, 2) // TXID
+        response[2] = 0x81.toByte(); response[3] = 0x80.toByte() // flags
+        response[4] = query[4]; response[5] = query[5] // QDCOUNT
+        response[6] = 0x00; response[7] = 0x01 // ANCOUNT = 1
+        // NSCOUNT, ARCOUNT = 0
+
+        // Question
+        System.arraycopy(query, 12, response, 12, nameLen + 4)
+
+        // Answer
+        val ansOff = 12 + nameLen + 4
+        response[ansOff] = 0xC0.toByte(); response[ansOff + 1] = 0x0C.toByte()
+        response.setUShortAt(ansOff + 2, if (qtype == 28) 28 else 1) // AAAA or A
+        response.setUShortAt(ansOff + 4, 1)   // Class IN
+        response.setUIntAt(ansOff + 6, 60)     // TTL
+        if (qtype == 28) {
+            // AAAA: 返回空 v6 地址 (::)，设备会回退到 IPv4
+            response.setUShortAt(ansOff + 10, 16)
+        } else {
+            response.setUShortAt(ansOff + 10, 4)
+            response[ansOff + 12] = 10; response[ansOff + 13] = 0
+            response[ansOff + 14] = 0; response[ansOff + 15] = 1
+        }
+        return response
+    }
+
+    private fun forwardDnsQuery(localSocket: DatagramSocket, query: DatagramPacket) {
+        try {
+            val fwdSocket = DatagramSocket()
+            fwdSocket.soTimeout = 3000
+            val fwdQuery = DatagramPacket(query.data, query.length, InetAddress.getByName("8.8.8.8"), 53)
+            fwdSocket.send(fwdQuery)
+            val respBuf = ByteArray(1024)
+            val respPacket = DatagramPacket(respBuf, respBuf.size)
+            fwdSocket.receive(respPacket)
+            val resp = DatagramPacket(respPacket.data, respPacket.length, query.address, query.port)
+            localSocket.send(resp)
+            fwdSocket.close()
+        } catch (_: Exception) {}
     }
 
     private fun stopVpn() {
@@ -241,20 +333,6 @@ class PixivVpnService : VpnService() {
         val dstPort = pkt.getUShortAt(tcpHdr + 2)
         val srcPort = pkt.getUShortAt(tcpHdr)
         val flags = pkt[tcpHdr + 13].toInt() and 0xFF
-
-        // 拦截 DNS-over-TLS (TCP:853) → 发送 RST，强制回退到 UDP:53 传统 DNS
-        if (dstPort == 853) {
-            if (flags and 0x02 != 0) { // SYN
-                Log.d("PixivVPN", "Blocking DoT to ${dstIp.toIPv4()}:853")
-                sendTcpPacket(
-                    srcIp = dstIp, dstIp = srcIp,
-                    srcPort = dstPort, dstPort = srcPort,
-                    seq = 0, ack = pkt.getUIntAt(tcpHdr + 4) + 1,
-                    flags = 0x14, data = null  // RST+ACK
-                )
-            }
-            return
-        }
 
         // 仅处理去往虚拟 IP:443 的流量
         if (dstIp.toIPv4() != VIRTUAL_IP || dstPort != 443) return
