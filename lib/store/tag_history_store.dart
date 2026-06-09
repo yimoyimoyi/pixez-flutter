@@ -33,9 +33,14 @@ abstract class _TagHistoryStoreBase with Store {
   TagsPersistProvider tagsPersistProvider = TagsPersistProvider();
   ObservableList<TagsPersist> tags = ObservableList();
 
+  /// 确保数据库已打开，避免多次 open 的 I/O 开销
+  Future<void> _ensureOpen() async {
+    await tagsPersistProvider.open();
+  }
+
   @action
   fetch() async {
-    await tagsPersistProvider.open();
+    await _ensureOpen();
     var result = await tagsPersistProvider.getAllAccount();
     tags.clear();
     tags.addAll(result);
@@ -43,7 +48,7 @@ abstract class _TagHistoryStoreBase with Store {
 
   @action
   insert(TagsPersist tagsPersist) async {
-    await tagsPersistProvider.open();
+    await _ensureOpen();
     for (int i = 0; i < tags.length; i++) {
       if (tags[i].name == tagsPersist.name && tags[i].type == Constants.type) {
         await tagsPersistProvider.delete(tags[i].id!);
@@ -56,14 +61,14 @@ abstract class _TagHistoryStoreBase with Store {
 
   @action
   delete(int id) async {
-    await tagsPersistProvider.open();
+    await _ensureOpen();
     await tagsPersistProvider.delete(id);
     await fetch();
   }
 
   @action
   deleteAll() async {
-    await tagsPersistProvider.open();
+    await _ensureOpen();
     await tagsPersistProvider.deleteAll(type: Constants.type);
     await fetch();
   }

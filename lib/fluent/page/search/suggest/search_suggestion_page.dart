@@ -68,7 +68,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
     var tags = query
         .split(" ")
         .map((e) => e.trim())
-        .takeWhile((value) => value.isNotEmpty);
+        .where((value) => value.isNotEmpty);
     if (tags.length > 1) tagGroup.addAll(tags);
     super.initState();
   }
@@ -259,7 +259,7 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
         var tags = query
             .split(" ")
             .map((e) => e.trim())
-            .takeWhile((value) => value.isNotEmpty);
+            .where((value) => value.isNotEmpty);
         if (tags.length > 1) tagGroup.addAll(tags);
         setState(() {});
         bool isNum = int.tryParse(query) != null;

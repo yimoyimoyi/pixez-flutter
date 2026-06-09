@@ -186,14 +186,22 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
+      imageBuilder: (context, imageProvider) {
+        final w = widget.width?.toInt();
+        final h = widget.height?.toInt();
+        final resized = (w != null || h != null)
+            ? ResizeImage(imageProvider, width: w, height: h)
+            : imageProvider;
+        return Image(
+          image: resized,
+          fit: fit ?? BoxFit.fitWidth,
+          width: widget.width,
+          height: widget.height,
+        );
+      },
       fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
-      // memCacheWidth: width?.toInt(),
-      // memCacheHeight: height?.toInt(),
       imageUrl: url,
       cacheManager: pixivCacheManager,
-      height: height,
-      width: width,
-      fit: fit ?? BoxFit.fitWidth,
       httpHeaders: Hoster.header(url: url),
     );
   }

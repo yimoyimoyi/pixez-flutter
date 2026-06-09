@@ -18,6 +18,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
 
 import 'package:pixez/er/hoster.dart';
@@ -37,7 +38,7 @@ const ImageSHost = "s.pximg.net";
 // 如果你恰好看到这个实现方法实例，且对你有些帮助或者启发：
 // 听一首Mili-Salt, Pepper, Birds, And the Thought Police吧 🎵
 
-DioCacheManager? pixivCacheManager = DioCacheManager.instance;
+CacheManager? pixivCacheManager;
 
 class PixEzCacheHeaderData {
   final String key;
@@ -88,7 +89,10 @@ class PixivImage extends StatefulWidget {
       existing.httpClientAdapter = ConversionLayerAdapter(client);
       return;
     }
-    final dio = Dio();
+    final dio = Dio(BaseOptions(
+      connectTimeout: Duration(seconds: 15),
+      receiveTimeout: Duration(seconds: 30),
+    ));
     dio.interceptors.add(
       PixivImageSourceInterceptor(
         networkMode: () => userSetting.networkMode,
@@ -97,7 +101,13 @@ class PixivImage extends StatefulWidget {
     );
     dio.httpClientAdapter = ConversionLayerAdapter(client);
     _cacheDio = dio;
-    DioCacheManager.initialize(dio);
+    // 自定义缓存：500 对象上限，避免浏览长列表时频繁驱逐
+    pixivCacheManager = CacheManager(Config(
+      'dioCache',
+      fileService: DioHttpFileService(dio),
+      maxNrOfCacheObjects: 500,
+      stalePeriod: Duration(days: 30),
+    ));
     // 预热 Worker：fire-and-forget 减少首图冷启动延迟
     _warmUpWorker(dio);
   }
@@ -207,7 +217,6 @@ class _PixivImageState extends State<PixivImage> {
           widget.placeWidget ?? Container(height: height),
       errorWidget: (context, url, error) {
         _scheduleRetry();
-        // 从 URL 提取文件名作为上下文提示
         final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
             ? Uri.parse(url).pathSegments.last
             : '';
@@ -237,14 +246,22 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
+      imageBuilder: (context, imageProvider) {
+        final w = widget.width?.toInt();
+        final h = widget.height?.toInt();
+        final resized = (w != null || h != null)
+            ? ResizeImage(imageProvider, width: w, height: h)
+            : imageProvider;
+        return Image(
+          image: resized,
+          fit: fit ?? BoxFit.fitWidth,
+          width: widget.width,
+          height: widget.height,
+        );
+      },
       fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
-      // memCacheWidth: width?.toInt(),
-      // memCacheHeight: height?.toInt(),
       imageUrl: url,
       cacheManager: pixivCacheManager,
-      height: height,
-      width: width,
-      fit: fit ?? BoxFit.fitWidth,
       httpHeaders: {...Hoster.header(url: url)},
     );
   }

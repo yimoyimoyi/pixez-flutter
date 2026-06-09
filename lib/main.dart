@@ -45,6 +45,14 @@ import 'package:pixez/store/top_store.dart';
 import 'package:pixez/store/user_setting.dart';
 import 'package:rhttp/rhttp.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter/painting.dart' show PaintingBinding;
+
+/// 调优 Flutter ImageCache：增大图片内存缓存上限，
+/// 减少浏览 Pixiv 大图时的缓存抖动和解码次数
+void _tuneImageCache() {
+  // 默认 100MB → 提升到 200MB，适应 Pixiv 大图场景
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
+}
 
 final RouteObserver<ModalRoute<void>> routeObserver =
     RouteObserver<ModalRoute<void>>();
@@ -64,6 +72,7 @@ main(List<String> args) async {
   await Rhttp.init();
   await MmapCache.init();
   WidgetsFlutterBinding.ensureInitialized();
+  _tuneImageCache();
 
   if (Platform.isWindows || Platform.isLinux) {
     // sqflite ffi init

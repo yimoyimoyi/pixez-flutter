@@ -207,54 +207,45 @@ class _SearchPageState extends State<SearchPage>
             sliver: SliverToBoxAdapter(
               child: Observer(
                 builder: (BuildContext context) {
-                  if (tagHistoryStore.tags.isNotEmpty) {
-                    final targetTags = tagHistoryStore.tags
-                        .where((element) =>
-                            element.type == null || element.type == 0)
-                        .toList();
-                    if (targetTags.length > 20) {
-                      final resultTags = targetTags.sublist(0, 12);
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5.0),
-                        child: Wrap(
-                          children: [
-                            for (var f in _tagExpand ? targetTags : resultTags)
-                              buildActionChip(f, context),
-                            ActionChip(
-                                label: AnimatedSwitcher(
-                                  duration: Duration(milliseconds: 300),
-                                  transitionBuilder: (child, anim) {
-                                    return ScaleTransition(
-                                        child: child, scale: anim);
-                                  },
-                                  child: Icon(!_tagExpand
-                                      ? Icons.expand_more
-                                      : Icons.expand_less),
-                                ),
-                                padding: EdgeInsets.all(0.0),
-                                onPressed: () {
-                                  setState(() {
-                                    _tagExpand = !_tagExpand;
-                                  });
-                                })
-                          ],
-                          runSpacing: 0.0,
-                          spacing: 5.0,
-                        ),
-                      );
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 5.0),
-                      child: Wrap(
-                        children: [
-                          for (var f in targetTags) buildActionChip(f, context),
-                        ],
-                        runSpacing: 0.0,
-                        spacing: 3.0,
-                      ),
-                    );
-                  }
-                  return Container();
+                  final targetTags = tagHistoryStore.tags
+                      .where((e) => e.type == null || e.type == 0)
+                      .take(50)  // 最多加载 50 条，避免 Observer 全量遍历
+                      .toList();
+                  if (targetTags.isEmpty) return Container();
+
+                  // 始终限制显示 12 条 + 展开按钮
+                  const maxShow = 12;
+                  final showAll = targetTags.length <= maxShow || _tagExpand;
+                  final displayTags = showAll
+                      ? targetTags
+                      : targetTags.sublist(0, maxShow);
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5.0),
+                    child: Wrap(
+                      children: [
+                        for (var f in displayTags)
+                          buildActionChip(f, context),
+                        if (targetTags.length > maxShow)
+                          ActionChip(
+                            label: AnimatedSwitcher(
+                              duration: Duration(milliseconds: 300),
+                              transitionBuilder: (child, anim) =>
+                                  ScaleTransition(child: child, scale: anim),
+                              child: Icon(_tagExpand
+                                  ? Icons.expand_less
+                                  : Icons.expand_more),
+                            ),
+                            padding: EdgeInsets.symmetric(horizontal: 4.0),
+                            onPressed: () {
+                              setState(() => _tagExpand = !_tagExpand);
+                            },
+                          ),
+                      ],
+                      runSpacing: 4.0,
+                      spacing: 5.0,
+                    ),
+                  );
                 },
               ),
             ),
