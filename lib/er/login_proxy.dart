@@ -90,7 +90,7 @@ class LoginProxy {
     }
     final host = target.substring(0, idx);
     final port = int.parse(target.substring(idx + 1));
-    LPrinter.d("CONNECT $host:$port");
+    print('LoginProxy CONNECT: $host:$port, isPixiv=${host.contains("pixiv")}');
 
     try {
       // 发送 200 Connection Established
@@ -101,24 +101,28 @@ class LoginProxy {
       // 获取底层 raw TCP socket
       final clientSocket = await request.response.detachSocket();
 
-      // 连接到上游: pixiv 域名用源站 IP，非 pixiv 直接连
+      // 尝试连接到上游
       Socket upstreamSocket;
       if (host.endsWith('.pixiv.net') || host == 'pixiv.net') {
         final ips = Hoster.apiPool();
+        print('LoginProxy: connecting to ${ips.first}:$port');
         upstreamSocket = await Socket.connect(ips.first, port,
-            timeout: Duration(seconds: 15));
+            timeout: Duration(seconds: 10));
       } else {
+        print('LoginProxy: connecting to $host:$port');
         upstreamSocket = await Socket.connect(host, port,
             timeout: Duration(seconds: 10));
       }
+      print('LoginProxy: connected, starting relay');
 
       // 双向字节中继
       await Future.wait([
         _relaySocket(clientSocket, upstreamSocket),
         _relaySocket(upstreamSocket, clientSocket),
       ]);
+      print('LoginProxy: relay done');
     } catch (e) {
-      LPrinter.d("CONNECT error: $e");
+      print('LoginProxy CONNECT error: $e');
       try {
         request.response.statusCode = 502;
         await request.response.close();

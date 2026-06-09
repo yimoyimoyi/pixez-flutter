@@ -23,10 +23,6 @@ import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
-import 'package:pixez/er/login_proxy.dart';
-import 'package:pixez/er/pixiv_vpn_plugin.dart';
-import 'package:pixez/er/v2ray_config.dart';
-import 'package:pixez/er/v2ray_manager.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
 
@@ -44,23 +40,17 @@ class _LoginPageState extends State<LoginPage> {
           CommandBarButton(
             icon: Icon(FluentIcons.settings),
             onPressed: () {
-              Leader.push(
-                context,
-                SettingQualityPage(),
-                icon: Icon(FluentIcons.settings),
-                title: Text(I18n.of(context).quality_setting),
-              );
+              Leader.push(context, SettingQualityPage(),
+                  icon: Icon(FluentIcons.settings),
+                  title: Text(I18n.of(context).quality_setting));
             },
           ),
           CommandBarButton(
             icon: Icon(FluentIcons.message),
             onPressed: () {
-              Leader.push(
-                context,
-                AboutPage(),
-                icon: Icon(FluentIcons.message),
-                title: Text(I18n.of(context).about),
-              );
+              Leader.push(context, AboutPage(),
+                  icon: Icon(FluentIcons.message),
+                  title: Text(I18n.of(context).about));
             },
           ),
         ],
@@ -92,7 +82,7 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(
                     children: <Widget>[
                       SizedBox(height: 10),
-                      // 1) Token 登录 — rhttp compat 直连
+                      // 1) Token 登录
                       FilledButton(
                         child: Text(I18n.of(context).login),
                         onPressed: () async {
@@ -103,13 +93,13 @@ class _LoginPageState extends State<LoginPage> {
                         },
                       ),
                       SizedBox(height: 8),
-                      // 2) Http Proxy 登录
+                      // 2) 内部 WebView
                       Button(
-                        child: Text("内部 WebView (Proxy)"),
+                        child: Text("内部 WebView"),
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl();
-                            _launchProxyWebView(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
@@ -119,24 +109,13 @@ class _LoginPageState extends State<LoginPage> {
                         onPressed: () async {
                           try {
                             final url = await OAuthClient.generateWebviewUrl(create: true);
-                            _launchProxyWebView(url);
-                          } catch (e) {}
-                        },
-                      ),
-                      SizedBox(height: 4),
-                      // 3) VpnService 实验性
-                      Button(
-                        child: Text("内部 WebView (VPN)"),
-                        onPressed: () async {
-                          try {
-                            final url = await OAuthClient.generateWebviewUrl();
-                            _launchVpnWebView(url);
+                            _launchWebView(url);
                           } catch (e) {}
                         },
                       ),
                       SizedBox(height: 8),
                       Divider(),
-                      // 4) 外部浏览器
+                      // 3) 外部浏览器
                       Button(
                         child: Text("外部浏览器"),
                         onPressed: () async {
@@ -168,52 +147,20 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<void> _launchWebView(String url) async {
+    try {
+      await Leader.push(context, WebViewPage(url: url),
+          icon: Icon(FluentIcons.signin), title: Text(I18n.of(context).login));
+    } catch (e) {
+      BotToast.showText(text: "WebView 登录失败: $e");
+    }
+  }
+
   Future<void> _launchExternal(String url) async {
     try {
       await CustomTabPlugin.launch(url);
     } catch (e) {
       BotToast.showText(text: "浏览器不可用: $e");
-    }
-  }
-
-  Future<void> _launchProxyWebView(String url) async {
-    try {
-      var finalUrl = url;
-      if (userSetting.networkMode.usesCompatibleConnection) {
-        await LoginProxy.start();
-        finalUrl = LoginProxy.proxyUrl(url);
-      }
-      await Leader.push(
-        context,
-        WebViewPage(url: finalUrl),
-        icon: Icon(FluentIcons.signin),
-        title: Text(I18n.of(context).login),
-      );
-    } catch (e) {
-      BotToast.showText(text: "Proxy 登录失败: $e");
-    }
-  }
-
-  Future<void> _launchVpnWebView(String url) async {
-    try {
-      if (userSetting.networkMode.usesCompatibleConnection) {
-        await LoginProxy.startHttps();
-        final config = V2RayConfig.generate();
-        final ok = await V2RayManager.start(config: config);
-        if (!ok) {
-          BotToast.showText(text: "VPN 权限未授予");
-          await LoginProxy.stop();
-          return;
-        }
-      }
-      await Leader.push(
-        context,
-        WebViewPage(url: url),
-        icon: Icon(FluentIcons.signin),
-        title: Text(I18n.of(context).login),
-      );
-    } catch (e) {
-      BotToast.showText(text: "VPN 登录失败: $e");
     }
   }
 }

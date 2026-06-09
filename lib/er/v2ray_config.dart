@@ -1,56 +1,27 @@
 /// V2Ray 配置生成器
+///
+/// flutter_v2ray 创建 VpnService TUN 接口。
+/// Xray 配置必须有 tun inbound 才能从 TUN 读取流量进行路由。
 library;
 
 import 'dart:convert';
 
 class V2RayConfig {
-  /// 生成 V2Ray 直通测试配置（所有流量直接，仅验证 TUN+DNS）
-  static String testDirect() {
-    return jsonEncode({
-      'log': {'loglevel': 'warning'},
-      'inbounds': [
-        {
-          'tag': 'socks-in',
-          'protocol': 'socks',
-          'listen': '127.0.0.1',
-          'port': 10808,
-          'settings': {'udp': true},
-          'sniffing': {'enabled': true, 'destOverride': ['http', 'tls']},
-        },
-      ],
-      'outbounds': [
-        {
-          'tag': 'direct',
-          'protocol': 'freedom',
-          'settings': {},
-        },
-      ],
-      'routing': {
-        'domainStrategy': 'AsIs',
-        'rules': [
-          {'type': 'field', 'network': 'tcp', 'outboundTag': 'direct'},
-          {'type': 'field', 'network': 'udp', 'outboundTag': 'direct'},
-        ],
-      },
-      'dns': {
-        'servers': ['1.1.1.1', '8.8.8.8'],
-        'queryStrategy': 'UseIPv4',
-      },
-    });
-  }
-
-  /// 正式配置
   static String generate({int proxyPort = 9876}) {
     return jsonEncode({
       'log': {'loglevel': 'warning'},
       'inbounds': [
         {
-          'tag': 'socks-in',
-          'protocol': 'socks',
-          'listen': '127.0.0.1',
-          'port': 10808,
-          'settings': {'udp': true},
-          'sniffing': {'enabled': true, 'destOverride': ['http', 'tls']},
+          'tag': 'tun-in',
+          'protocol': 'tun',
+          'settings': {
+            'dev': 'tun@',
+            'mtu': 1500,
+          },
+          'sniffing': {
+            'enabled': true,
+            'destOverride': ['http', 'tls'],
+          },
         },
       ],
       'outbounds': [
@@ -70,7 +41,7 @@ class V2RayConfig {
         },
       ],
       'routing': {
-        'domainStrategy': 'IPIfNonMatch',
+        'domainStrategy': 'AsIs',
         'rules': [
           {
             'type': 'field',
@@ -86,8 +57,14 @@ class V2RayConfig {
         ],
       },
       'dns': {
-        'servers': ['1.1.1.1', '8.8.8.8'],
+        'hosts': {
+          'domain:pixiv.net': '210.140.139.154',
+          'domain:pximg.net': '210.140.139.131',
+          'www.pixivision.net': '210.140.139.154',
+        },
+        'servers': ['localhost', '223.5.5.5'],
         'queryStrategy': 'UseIPv4',
+        'disableFallback': false,
       },
     });
   }
