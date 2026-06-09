@@ -128,8 +128,6 @@ class _NovelUserWorkPageState extends State<NovelUserWorkPage> {
                         child: PixivImage(
                           novel.imageUrls.qualityUrl,
                           width: 80,
-                          height: 80,
-                          fit: BoxFit.cover,
                         ),
                       ),
                       Expanded(

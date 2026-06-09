@@ -125,11 +125,16 @@ class _NovelLightingListState extends State<NovelLightingList> {
                       children: [
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: PixivImage(
-                            novel.imageUrls.qualityUrl,
+                          child: Container(
                             width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
+                            height: 90,
+                            clipBehavior: Clip.hardEdge,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(4)),
+                            child: PixivImage(
+                              novel.imageUrls.qualityUrl,
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
                         Expanded(

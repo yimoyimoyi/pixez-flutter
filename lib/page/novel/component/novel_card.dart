@@ -38,8 +38,12 @@ class _NovelCardState extends State<NovelCard> {
           Column(
             mainAxisSize: MainAxisSize.max,
             children: <Widget>[
-              PixivImage(widget.novel.imageUrls.squareMedium,
-                  width: 60, height: 60, fit: BoxFit.cover),
+              Container(
+                width: 60,
+                height: 60,
+                child: PixivImage(widget.novel.imageUrls.squareMedium,
+                    fit: BoxFit.cover),
+              ),
               Text(widget.novel.totalView.toString())
             ],
           ),
