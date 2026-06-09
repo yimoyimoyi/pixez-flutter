@@ -211,6 +211,20 @@ class PixivVpnService : VpnService() {
         val srcPort = pkt.getUShortAt(tcpHdr)
         val flags = pkt[tcpHdr + 13].toInt() and 0xFF
 
+        // 拦截 DNS-over-TLS (TCP:853) → 发送 RST，强制回退到 UDP:53 传统 DNS
+        if (dstPort == 853) {
+            if (flags and 0x02 != 0) { // SYN
+                Log.d("PixivVPN", "Blocking DoT to ${dstIp.toIPv4()}:853")
+                sendTcpPacket(
+                    srcIp = dstIp, dstIp = srcIp,
+                    srcPort = dstPort, dstPort = srcPort,
+                    seq = 0, ack = pkt.getUIntAt(tcpHdr + 4) + 1,
+                    flags = 0x14, data = null  // RST+ACK
+                )
+            }
+            return
+        }
+
         // 仅处理去往虚拟 IP:443 的流量
         if (dstIp.toIPv4() != VIRTUAL_IP || dstPort != 443) return
 
