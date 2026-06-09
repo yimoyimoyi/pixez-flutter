@@ -19,6 +19,7 @@
 //     final novelRecomResponse = novelRecomResponseFromJson(jsonString);
 
 import 'package:json_annotation/json_annotation.dart';
+import 'package:pixez/main.dart';
 part 'novel_recom_response.g.dart';
 
 @JsonSerializable()
@@ -204,3 +205,14 @@ class ProfileImageUrls {
 //     "url": url,
 //   };
 // }
+
+/// 根据 pictureQuality 设置选择小说封面质量
+extension NovelImageQuality on ImageUrls {
+  String get qualityUrl {
+    final q = userSetting.pictureQuality;
+    return switch (q) {
+      0 => medium,
+      _ => large,
+    };
+  }
+}

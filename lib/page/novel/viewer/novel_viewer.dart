@@ -307,7 +307,7 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
           Center(
             child: Container(
               height: 160,
-              child: PixivImage(_novelStore.novel!.imageUrls.medium),
+              child: PixivImage(_novelStore.novel!.imageUrls.qualityUrl),
             ),
           ),
           Padding(

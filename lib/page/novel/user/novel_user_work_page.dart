@@ -126,8 +126,10 @@ class _NovelUserWorkPageState extends State<NovelUserWorkPage> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
                         child: PixivImage(
-                          novel.imageUrls.medium,
+                          novel.imageUrls.qualityUrl,
                           width: 80,
+                          height: 80,
+                          fit: BoxFit.cover,
                         ),
                       ),
                       Expanded(

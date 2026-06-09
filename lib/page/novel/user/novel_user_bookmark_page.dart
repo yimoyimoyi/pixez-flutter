@@ -140,7 +140,7 @@ class _NovelUserBookmarkPageState extends State<NovelUserBookmarkPage> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
                         child: PixivImage(
-                          novel.imageUrls.medium,
+                          novel.imageUrls.qualityUrl,
                           width: 80,
                         ),
                       ),
