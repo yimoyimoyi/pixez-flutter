@@ -41,8 +41,8 @@ class _NovelCardState extends State<NovelCard> {
               Container(
                 width: 60,
                 height: 60,
-                child: PixivImage(widget.novel.imageUrls.squareMedium,
-                    fit: BoxFit.cover),
+                color: Colors.grey.shade200,
+                child: PixivImage(widget.novel.imageUrls.squareMedium),
               ),
               Text(widget.novel.totalView.toString())
             ],

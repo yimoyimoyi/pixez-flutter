@@ -128,12 +128,10 @@ class _NovelLightingListState extends State<NovelLightingList> {
                           child: Container(
                             width: 80,
                             height: 90,
-                            clipBehavior: Clip.hardEdge,
-                            decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(4)),
+                            color: Colors.grey.shade200,
                             child: PixivImage(
                               novel.imageUrls.qualityUrl,
-                              fit: BoxFit.cover,
+                              fit: BoxFit.contain,
                             ),
                           ),
                         ),
