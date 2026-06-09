@@ -227,7 +227,8 @@ class _LoginPageState extends State<LoginPage> {
         await LoginProxy.startHttps();
 
         // 2. 启动 V2Ray VPN（无节点，纯本地路由）
-        final config = V2RayConfig.generate();
+        // 先用直通模式测试 V2Ray TUN+DNS 是否正常
+        final config = V2RayConfig.testDirect();
         final ok = await V2RayManager.start(config: config);
         if (!ok) {
           BotToast.showText(text: "VPN 权限未授予");

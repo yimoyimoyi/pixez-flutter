@@ -35,7 +35,7 @@ class V2RayManager {
         return false;
       }
 
-      print('[V2Ray] Starting with config: ${config.length} chars');
+      print('[V2Ray] Starting with config: ${config.substring(0, 100)}...');
       await _instance!.startV2Ray(
         remark: 'PixEz',
         config: config,
