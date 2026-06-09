@@ -189,8 +189,14 @@ class PixivVpnService : VpnService() {
 
         if (qname != null && qname.endsWith(".pixiv.net")) {
             // 劫持: *.pixiv.net → 10.0.0.1
+            val nameLen = dnsNameWireLen(dnsData, 12)
+            val qtypeOff = 12 + nameLen
+            val qtype = if (qtypeOff + 2 <= dnsData.size) dnsData.getUShortAt(qtypeOff) else 0
+            Log.d("PixivVPN", "DNS hijack: $qname type=$qtype → 10.0.0.1")
             val resp = buildDnsResponse(pkt, len, ipHdr, srcIp, dstIp, dnsData, qname)
             try { tunOutput?.write(resp) } catch (_: Exception) {}
+            Log.d("PixivVPN", "DNS hijack: wrote ${resp.size} bytes response")
+            return
         } else {
             // 转发其他 DNS 查询到 8.8.8.8
             forwardDns(pkt, dnsData, len, ipHdr, srcIp, dstIp)
