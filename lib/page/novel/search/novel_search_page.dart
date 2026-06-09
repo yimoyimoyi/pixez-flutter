@@ -37,6 +37,7 @@ class NovelSearchPage extends StatefulWidget {
 }
 
 class _NovelSearchPageState extends State<NovelSearchPage> {
+  int _tagPage = 0;
   late TextEditingController _textEditingController;
   List<TrendTags> _tags = [];
 
@@ -184,18 +185,66 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                     )),
               ])),
             SliverToBoxAdapter(
-                child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Wrap(
-                children: [
-                  for (var f in tagHistoryStore.tags
-                      .where((element) => element.type == 1))
-                    buildActionChip(f, context),
-                ],
-                runSpacing: 0.0,
-                spacing: 3.0,
-              ),
-            )),
+              child: Observer(builder: (context) {
+                final tags = tagHistoryStore.tags
+                    .where((e) => e.type == 1)
+                    .toList();
+                if (tags.isEmpty) return Container();
+                const pageSize = 24;
+                final maxPage = (tags.length - 1) ~/ pageSize;
+                if (_tagPage > maxPage) _tagPage = maxPage;
+                final start = _tagPage * pageSize;
+                final end =
+                    (start + pageSize > tags.length) ? tags.length : start + pageSize;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Wrap(
+                        children: [
+                          for (var f in tags.sublist(start, end))
+                            buildActionChip(f, context),
+                        ],
+                        runSpacing: 4.0,
+                        spacing: 5.0,
+                      ),
+                      if (tags.length > pageSize)
+                        Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_tagPage > 0)
+                                ActionChip(
+                                  label: Text('上一页'),
+                                  padding: EdgeInsets.symmetric(horizontal: 4),
+                                  onPressed: () =>
+                                      setState(() => _tagPage--),
+                                ),
+                              Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 8),
+                                child: Text(
+                                  '${_tagPage + 1}/${maxPage + 1}',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              if (_tagPage < maxPage)
+                                ActionChip(
+                                  label: Text('下一页'),
+                                  padding: EdgeInsets.symmetric(horizontal: 4),
+                                  onPressed: () =>
+                                      setState(() => _tagPage++),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              }),
+            ),
             SliverToBoxAdapter(
               child: Observer(builder: (context) {
                 if (tagHistoryStore.tags
