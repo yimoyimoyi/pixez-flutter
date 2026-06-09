@@ -218,35 +218,6 @@ class _SearchPageState extends State<SearchPage>
                       ? targetTags
                       : targetTags.sublist(0, maxShow);
 
-                  // 展开后大量标签用 ListView 虚拟化
-                  if (showAll && targetTags.length > 30) {
-                    return ListView.builder(
-                      shrinkWrap: true,
-                      physics: NeverScrollableScrollPhysics(),
-                      itemCount: targetTags.length + 1,
-                      itemBuilder: (ctx, i) {
-                        if (i == targetTags.length) {
-                          return Padding(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 4),
-                            child: ActionChip(
-                              label: Icon(Icons.expand_less),
-                              padding: EdgeInsets.symmetric(horizontal: 4),
-                              onPressed: () =>
-                                  setState(() => _tagExpand = false),
-                            ),
-                          );
-                        }
-                        return Container(
-                          margin: EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
-                          child: buildActionChip(targetTags[i], context),
-                        );
-                      },
-                    );
-                  }
-
-                  // 折叠态或少量标签用 Wrap
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 5.0),
                     child: Wrap(
