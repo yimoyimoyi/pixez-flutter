@@ -310,9 +310,12 @@ class NovelSeriesPage extends HookConsumerWidget {
                   children: [
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
-                      child: PixivImage(
-                        novel.imageUrls.qualityUrl,
+                      child: Container(
                         width: 80,
+                        height: 90,
+                        color: Colors.grey.shade200,
+                        child: PixivImage(novel.imageUrls.qualityUrl,
+                            fit: BoxFit.contain),
                       ),
                     ),
                     Expanded(
