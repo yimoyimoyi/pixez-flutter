@@ -14,6 +14,8 @@
  *
  */
 
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
@@ -170,6 +172,8 @@ class _PixivImageState extends State<PixivImage> {
   Widget? placeWidget;
   int _retryCount = 0;
   String? _lastKey;
+  Uint8List? _cachedBytes; // 方案 B: 从本地缓存回退的图片字节
+  bool _fromCache = false;
 
   @override
   void initState() {
@@ -188,11 +192,37 @@ class _PixivImageState extends State<PixivImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
       _retryCount = 0;
+      _cachedBytes = null;
+      _fromCache = false;
       setState(() {
         url = widget.url;
         width = widget.width;
         height = widget.height;
       });
+    }
+  }
+
+  /// 方案 B: 尝试从本地文件缓存加载图片
+  Future<void> _tryLoadFromCache(String sourceUrl) async {
+    if (_cachedBytes != null) return; // 已加载
+    try {
+      final resolvedUrl = PixivImageSource.resolve(
+        sourceUrl,
+        networkMode: userSetting.networkMode,
+        pictureSource: userSetting.pictureSource,
+      );
+      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
+      if (fileInfo != null && mounted) {
+        final bytes = fileInfo.file.readAsBytesSync();
+        if (bytes.isNotEmpty) {
+          setState(() {
+            _cachedBytes = bytes;
+            _fromCache = true;
+          });
+        }
+      }
+    } catch (e) {
+      print('_tryLoadFromCache error: $e');
     }
   }
 
@@ -211,12 +241,41 @@ class _PixivImageState extends State<PixivImage> {
   Widget build(BuildContext context) {
     final currentKey = url;
     if (_lastKey != currentKey) { _lastKey = currentKey; }
+
+    // 方案 B: 如果已从缓存加载，直接显示
+    if (_cachedBytes != null) {
+      return Container(
+        width: width,
+        height: height,
+        color: Colors.grey.shade200,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(_cachedBytes!, fit: fit ?? BoxFit.fitWidth, width: width, height: height),
+            // 缓存标记
+            Positioned(
+              bottom: 2, right: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('缓存', style: TextStyle(color: Colors.white, fontSize: 9)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
       placeholder: (context, url) =>
           widget.placeWidget ?? Container(height: height),
       errorWidget: (context, url, error) {
         _scheduleRetry();
+        _tryLoadFromCache(url); // 方案 B: 网络失败后尝试本地缓存
         final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
             ? Uri.parse(url).pathSegments.last
             : '';
@@ -237,6 +296,7 @@ class _PixivImageState extends State<PixivImage> {
                 TextButton(
                   onPressed: () {
                     _retryCount = 0;
+                    _cachedBytes = null;
                     setState(() {});
                   },
                   child: Text(":("),

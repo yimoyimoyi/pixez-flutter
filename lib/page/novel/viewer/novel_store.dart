@@ -15,7 +15,9 @@
  */
 
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:html/parser.dart';
 import 'package:mobx/mobx.dart';
@@ -26,6 +28,7 @@ import 'package:pixez/models/novel_viewer_persist.dart';
 import 'package:pixez/models/novel_web_response.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/novel/viewer/image_text.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/widgets.dart';
 
 part 'novel_store.g.dart';
@@ -83,8 +86,11 @@ abstract class _NovelStoreBase with Store {
           novel = Novel.fromJson(detailResp.data['novel']);
           novelHistoryStore.insert(novel!);
         } catch (metaErr) {
-          // 元数据失败不阻塞，正文可能仍然可用
           print('novel metadata fetch failed: $metaErr');
+          // 失败时尝试从本地历史恢复元数据（方案 C）
+          if (novel == null) {
+            novel = await _restoreNovelFromHistory();
+          }
         }
       }
       // 2) 再取正文（HTML 解析，可能失败）
@@ -92,18 +98,119 @@ abstract class _NovelStoreBase with Store {
       final html = response.data is String ? response.data : response.data.toString();
       String? json = _parseHtml(html);
       if (json == null) {
+        // 尝试从缓存加载（方案 A）
+        if (await _loadNovelTextFromCache()) return;
         errorMessage = '页面结构异常，无法解析小说正文';
         return;
       }
       novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
       spans = await compute(buildSpans, novelTextResponse!);
       if (novel != null) novelHistoryStore.insert(novel!);
+      // 正文加载成功后保存到本地缓存（方案 A）
+      await _saveNovelTextToCache(json);
       fetchOffset();
-    } catch (e) {
+    } on DioException catch (e) {
       print(e);
-      // 保留已加载的旧内容（如果有的话）
+      if (e.response?.statusCode == 404) {
+        // 作品已删除/下架（方案 C）
+        await _handleDeletedNovel();
+        return;
+      }
+      // 尝试从缓存加载（方案 A）
+      if (await _loadNovelTextFromCache()) return;
       errorMessage = '加载失败：${e.toString().split('\n').first}'
           '${novel != null ? '\n已保留作品信息，可重试' : ''}';
+    } catch (e) {
+      print(e);
+      // 尝试从缓存加载（方案 A）
+      if (await _loadNovelTextFromCache()) return;
+      errorMessage = '加载失败：${e.toString().split('\n').first}'
+          '${novel != null ? '\n已保留作品信息，可重试' : ''}';
+    }
+  }
+
+  /// 获取小说正文缓存文件路径
+  Future<File> _novelTextCacheFile() async {
+    final dir = await getApplicationSupportDirectory();
+    final cacheDir = Directory('${dir.path}/novel_text_cache');
+    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
+    return File('${cacheDir.path}/novel_$id.json');
+  }
+
+  /// 保存小说正文 JSON 到本地文件
+  Future<void> _saveNovelTextToCache(String json) async {
+    try {
+      final file = await _novelTextCacheFile();
+      await file.writeAsString(json);
+      // 同时保存元数据用于离线恢复
+      if (novel != null) {
+        final metaFile = File('${file.path}.meta');
+        await metaFile.writeAsString(jsonEncode({
+          'title': novel!.title,
+          'userName': novel!.user.name,
+          'userId': novel!.user.id,
+          'coverUrl': novel!.imageUrls.medium,
+          'cachedAt': DateTime.now().millisecondsSinceEpoch,
+        }));
+      }
+    } catch (e) {
+      print('_saveNovelTextToCache error: $e');
+    }
+  }
+
+  /// 从本地缓存加载小说正文
+  Future<bool> _loadNovelTextFromCache() async {
+    try {
+      final file = await _novelTextCacheFile();
+      if (!await file.exists()) return false;
+      final json = await file.readAsString();
+      novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
+      spans = await compute(buildSpans, novelTextResponse!);
+      errorMessage = null; // 清除错误状态
+      fetchOffset();
+      return true;
+    } catch (e) {
+      print('_loadNovelTextFromCache error: $e');
+      return false;
+    }
+  }
+
+  /// 从历史记录恢复小说元数据（方案 C）
+  Future<Novel?> _restoreNovelFromHistory() async {
+    try {
+      await novelHistoryStore.novelPersistProvider.open();
+      final all = await novelHistoryStore.novelPersistProvider.getAllAccount();
+      final match = all.where((p) => p.novelId == id).toList();
+      if (match.isNotEmpty) {
+        final p = match.first;
+        return Novel.fromJson({
+          'id': p.novelId.toString(),
+          'title': p.title,
+          'user': {'id': p.userId.toString(), 'name': p.userName},
+          'image_urls': {'square_medium': p.pictureUrl, 'medium': p.pictureUrl, 'large': p.pictureUrl},
+          'total_bookmarks': 0, 'total_view': 0,
+          'create_date': '',
+        });
+      }
+    } catch (e) {
+      print('_restoreNovelFromHistory error: $e');
+    }
+    return null;
+  }
+
+  /// 处理已删除的小说（方案 C）
+  Future<void> _handleDeletedNovel() async {
+    // 先从缓存加载正文
+    final hasCache = await _loadNovelTextFromCache();
+    // 从历史恢复元数据
+    if (novel == null) {
+      novel = await _restoreNovelFromHistory();
+    }
+    if (hasCache) return;
+    if (novel != null) {
+      errorMessage = '作品已失效（缓存信息）';
+    } else {
+      errorMessage = '作品已失效（404 Not Found）';
     }
   }
 

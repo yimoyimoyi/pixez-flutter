@@ -14,10 +14,14 @@
  *
  */
 
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/hoster.dart';
+import 'package:pixez/er/pixiv_image_source.dart';
+import 'package:pixez/main.dart';
 import 'package:pixez/page/user/users_page.dart';
 
 class PainterAvatar extends StatefulWidget {
@@ -35,6 +39,8 @@ class PainterAvatar extends StatefulWidget {
 }
 
 class _PainterAvatarState extends State<PainterAvatar> {
+  Uint8List? _cachedBytes;
+
   void pushToUserPage() {
     Navigator.of(context, rootNavigator: true)
         .push(MaterialPageRoute(builder: (_) {
@@ -42,8 +48,51 @@ class _PainterAvatarState extends State<PainterAvatar> {
     }));
   }
 
+  /// 方案 B: 尝试从本地文件缓存加载头像
+  Future<void> _tryLoadFromCache() async {
+    if (_cachedBytes != null) return;
+    try {
+      final sourceUrl = PixivImageSource.resolve(
+        widget.url,
+        networkMode: userSetting.networkMode,
+        pictureSource: userSetting.pictureSource,
+      );
+      final fileInfo = await pixivCacheManager?.getFileFromCache(sourceUrl);
+      if (fileInfo != null && mounted) {
+        final bytes = fileInfo.file.readAsBytesSync();
+        if (bytes.isNotEmpty) setState(() => _cachedBytes = bytes);
+      }
+    } catch (_) {}
+  }
+
+  Widget? _buildCachedAvatar(double size) {
+    if (_cachedBytes != null) {
+      return Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          image: DecorationImage(image: MemoryImage(_cachedBytes!), fit: BoxFit.cover),
+        ),
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final cachedWidget = widget.size == null
+        ? _buildCachedAvatar(60.0)
+        : _buildCachedAvatar(widget.size!.width);
+    if (cachedWidget != null) {
+      return GestureDetector(
+        onTap: () {
+          if (widget.onTap == null) pushToUserPage();
+          else widget.onTap!();
+        },
+        child: cachedWidget,
+      );
+    }
+
     return GestureDetector(
         onTap: () {
           if (widget.onTap == null) {
@@ -72,13 +121,16 @@ class _PainterAvatarState extends State<PainterAvatar> {
                 ),
                 httpHeaders: Hoster.header(url: widget.url),
                 cacheManager: pixivCacheManager,
-                errorWidget: (context, url, error) => Container(
-                  width: 60.0,
-                  height: 60.0,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).cardColor),
-                ),
+                errorWidget: (context, url, error) {
+                  _tryLoadFromCache(); // 方案 B: 网络失败后尝试缓存
+                  return Container(
+                    width: 60.0,
+                    height: 60.0,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Theme.of(context).cardColor),
+                  );
+                },
               )
             : CachedNetworkImage(
                 imageUrl: widget.url,
@@ -90,13 +142,16 @@ class _PainterAvatarState extends State<PainterAvatar> {
                       shape: BoxShape.circle,
                       color: Theme.of(context).cardColor),
                 ),
-                errorWidget: (context, url, error) => Container(
-                  width: widget.size!.width,
-                  height: widget.size!.height,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).cardColor),
-                ),
+                errorWidget: (context, url, error) {
+                  _tryLoadFromCache(); // 方案 B
+                  return Container(
+                    width: widget.size!.width,
+                    height: widget.size!.height,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Theme.of(context).cardColor),
+                  );
+                },
                 imageBuilder: (context, imageProvider) => Container(
                   width: widget.size!.width,
                   height: widget.size!.height,

@@ -34,6 +34,7 @@ import 'package:pixez/page/account/select/account_select_page.dart';
 import 'package:pixez/page/board/board_page.dart';
 import 'package:pixez/page/book/tag/book_tag_page.dart';
 import 'package:pixez/page/hello/recom/recom_manga_page.dart';
+import 'package:pixez/page/hello/setting/app_cache_page.dart';
 import 'package:pixez/page/hello/setting/data_export_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
 import 'package:pixez/page/history/history_page.dart';
@@ -258,6 +259,11 @@ class _SettingPageState extends State<SettingPage> {
                       leading: Icon(Icons.save_alt),
                       title: Text(I18n.of(context).task_progress),
                       onTap: () => Leader.push(context, JobPage()),
+                    ),
+                    ListTile(
+                      onTap: () => Leader.push(context, AppCachePage()),
+                      title: const Text('缓存管理'),
+                      leading: const Icon(Icons.cached),
                     ),
                     ListTile(
                       onTap: () => Leader.push(context, DataExportPage()),
