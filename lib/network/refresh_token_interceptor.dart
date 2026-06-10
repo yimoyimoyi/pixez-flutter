@@ -42,10 +42,11 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
   Future<void> onRequest(
       RequestOptions options, RequestInterceptorHandler handler) async {
     if (!options.path.contains('v1/walkthrough/illusts')) {
-      options.headers[OAuthClient.AUTHORIZATION] = await getToken();
-      if (options.headers[OAuthClient.AUTHORIZATION] == null) {
-        return handler.reject(DioException(requestOptions: options));
+      final token = await getToken();
+      if (token != null) {
+        options.headers[OAuthClient.AUTHORIZATION] = token;
       }
+      // 游客模式：无 Token 时放行请求，由 Pixiv 后端决定是否接受
     }
     return handler.next(options);
   }

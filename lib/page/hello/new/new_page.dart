@@ -133,35 +133,14 @@ class _NewPageState extends State<NewPage>
             )
           ],
         );
-      return DefaultTabController(
-          length: 3,
-          child: Scaffold(
-            appBar: AppBar(
-              title: TabBar(
-                tabs: [
-                  Tab(
-                    child: Text(
-                        '${I18n.of(context).follow}${I18n.of(context).news}'),
-                  ),
-                  Tab(
-                    child: Text(
-                        '${I18n.of(context).personal}${I18n.of(context).bookmark}'),
-                  ),
-                  Tab(
-                    child: Text(
-                        '${I18n.of(context).follow}${I18n.of(context).painter}'),
-                  ),
-                ],
-              ),
-            ),
-            body: TabBarView(
-              children: <Widget>[
-                LoginInFirst(),
-                LoginInFirst(),
-                LoginInFirst(),
-              ],
-            ),
-          ));
+      // 游客模式：显示 walkthrough 预览内容
+      return Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          title: Text(I18n.of(context).quick_view),
+        ),
+        body: PreviewPage(),
+      );
     });
   }
 
