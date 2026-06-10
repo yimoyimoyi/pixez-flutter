@@ -202,15 +202,16 @@ class _PixivImageState extends State<PixivImage> {
     }
   }
 
-  /// 方案 B: 尝试从本地文件缓存加载图片
-  Future<void> _tryLoadFromCache(String sourceUrl) async {
-    if (_cachedBytes != null) return; // 已加载
+  /// 方案 B: 网络失败后依次尝试本地缓存 → 直接下载
+  Future<void> _tryLoadFallback(String sourceUrl) async {
+    if (_cachedBytes != null) return;
     try {
       final resolvedUrl = PixivImageSource.resolve(
         sourceUrl,
         networkMode: userSetting.networkMode,
         pictureSource: userSetting.pictureSource,
       );
+      // 1) 尝试本地文件缓存
       final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
       if (fileInfo != null && mounted) {
         final bytes = fileInfo.file.readAsBytesSync();
@@ -219,11 +220,46 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes = bytes;
             _fromCache = true;
           });
+          return;
         }
       }
+      // 2) 缓存未命中，直接用 Dio 下载（绕过 CachedNetworkImage 管线）
+      await _directDownload(resolvedUrl);
     } catch (e) {
-      print('_tryLoadFromCache error: $e');
+      print('_tryLoadFallback error: $e');
     }
+  }
+
+  /// 直接用 Dio 下载图片字节，绕过 CacheManager/CachedNetworkImage 管线
+  Future<void> _directDownload(String downloadUrl) async {
+    try {
+      final dio = await _getImageDio();
+      final resp = await dio.get<List<int>>(
+        downloadUrl,
+        options: Options(
+          headers: {...Hoster.header(url: downloadUrl)},
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+      if (resp.data != null && resp.data!.isNotEmpty && mounted) {
+        setState(() {
+          _cachedBytes = Uint8List.fromList(resp.data!);
+          _fromCache = false;
+        });
+      }
+    } catch (e) {
+      print('_directDownload error: $e');
+    }
+  }
+
+  /// 获取图片专用 Dio（复用 PixivImage._cacheDio，避免创建多余的 rhttp client）
+  Future<Dio> _getImageDio() async {
+    if (PixivImage._cacheDio != null) return PixivImage._cacheDio!;
+    return Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 30),
+    ));
   }
 
   void _scheduleRetry() {
@@ -275,7 +311,7 @@ class _PixivImageState extends State<PixivImage> {
           widget.placeWidget ?? Container(height: height),
       errorWidget: (context, url, error) {
         _scheduleRetry();
-        _tryLoadFromCache(url); // 方案 B: 网络失败后尝试本地缓存
+        _tryLoadFallback(url); // 方案 B: 网络失败→缓存→直接下载
         final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
             ? Uri.parse(url).pathSegments.last
             : '';
@@ -296,7 +332,7 @@ class _PixivImageState extends State<PixivImage> {
                 TextButton(
                   onPressed: () {
                     _retryCount = 0;
-                    _cachedBytes = null;
+                    _cachedBytes = null; // 重置缓存，强制重试网络
                     setState(() {});
                   },
                   child: Text(":("),

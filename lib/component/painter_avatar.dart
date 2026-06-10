@@ -17,6 +17,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/hoster.dart';
@@ -48,8 +49,8 @@ class _PainterAvatarState extends State<PainterAvatar> {
     }));
   }
 
-  /// 方案 B: 尝试从本地文件缓存加载头像
-  Future<void> _tryLoadFromCache() async {
+  /// 方案 B: 网络失败后依次尝试本地缓存 → 直接下载
+  Future<void> _tryLoadFallback() async {
     if (_cachedBytes != null) return;
     try {
       final sourceUrl = PixivImageSource.resolve(
@@ -57,10 +58,29 @@ class _PainterAvatarState extends State<PainterAvatar> {
         networkMode: userSetting.networkMode,
         pictureSource: userSetting.pictureSource,
       );
+      // 1) 尝试本地文件缓存
       final fileInfo = await pixivCacheManager?.getFileFromCache(sourceUrl);
       if (fileInfo != null && mounted) {
         final bytes = fileInfo.file.readAsBytesSync();
-        if (bytes.isNotEmpty) setState(() => _cachedBytes = bytes);
+        if (bytes.isNotEmpty) {
+          setState(() => _cachedBytes = bytes);
+          return;
+        }
+      }
+      // 2) 缓存未命中，直接 Dio 下载
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 15),
+      ));
+      final resp = await dio.get<List<int>>(
+        sourceUrl,
+        options: Options(
+          headers: {...Hoster.header(url: widget.url)},
+          responseType: ResponseType.bytes,
+        ),
+      );
+      if (resp.data != null && resp.data!.isNotEmpty && mounted) {
+        setState(() => _cachedBytes = Uint8List.fromList(resp.data!));
       }
     } catch (_) {}
   }
@@ -122,7 +142,7 @@ class _PainterAvatarState extends State<PainterAvatar> {
                 httpHeaders: Hoster.header(url: widget.url),
                 cacheManager: pixivCacheManager,
                 errorWidget: (context, url, error) {
-                  _tryLoadFromCache(); // 方案 B: 网络失败后尝试缓存
+                  _tryLoadFallback(); // 方案 B: 网络失败→缓存→直接下载
                   return Container(
                     width: 60.0,
                     height: 60.0,
@@ -143,7 +163,7 @@ class _PainterAvatarState extends State<PainterAvatar> {
                       color: Theme.of(context).cardColor),
                 ),
                 errorWidget: (context, url, error) {
-                  _tryLoadFromCache(); // 方案 B
+                  _tryLoadFallback(); // 方案 B
                   return Container(
                     width: widget.size!.width,
                     height: widget.size!.height,
