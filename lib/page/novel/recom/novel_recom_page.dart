@@ -135,7 +135,7 @@ class _NovelRecomPageState extends State<NovelRecomPage>
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Container(
                         width: 80,
-                        height: 90,
+                        height: 112,
                         color: Colors.grey.shade200,
                         child: PixivImage(novel.imageUrls.qualityUrl,
                             fit: BoxFit.contain),

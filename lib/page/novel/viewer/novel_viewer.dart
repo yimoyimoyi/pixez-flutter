@@ -306,8 +306,8 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
           Container(height: 100),
           Center(
             child: Container(
-              width: 160,
-              height: 160,
+              width: 200,
+              height: 280,
               clipBehavior: Clip.hardEdge,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
