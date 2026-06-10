@@ -63,11 +63,14 @@ class _AndroidHelloPageState extends State<AndroidHelloPage> {
   Widget build(BuildContext context) {
     return Observer(
       builder: (context) {
+        if (accountStore.now != null &&
+            (Platform.isIOS || Platform.isAndroid)) {
+          return _buildScaffold(context);
+        }
         if (accountStore.now == null && accountStore.feching) {
           return Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-        // 游客模式：直接显示主页，需要登录的功能内部处理
-        return _buildScaffold(context);
+        return LoginPage();
       },
     );
   }

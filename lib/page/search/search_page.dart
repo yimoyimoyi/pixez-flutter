@@ -116,28 +116,50 @@ class _SearchPageState extends State<SearchPage>
     super.build(context);
     return LayoutBuilder(builder: (context, snapshot) {
       return Observer(builder: (_) {
-        return NestedScrollView(
-          body: _buildContent(context, snapshot),
-          headerSliverBuilder:
-              (BuildContext context, bool innerBoxIsScrolled) {
-            return [
-              SliverToBoxAdapter(
-                child: Container(height: MediaQuery.of(context).padding.top),
-              ),
-              SliverToBoxAdapter(
-                child: SearchBar(
-                  onSaucenao: () {
-                    if (userSetting.useSaunceNaoWebview) {
-                      Leader.push(context, SauncenaoWebview());
-                    } else {
-                      _sauceStore.findImage(context: context);
-                    }
-                  },
+        if (accountStore.now != null)
+          return NestedScrollView(
+            body: _buildContent(context, snapshot),
+            headerSliverBuilder:
+                (BuildContext context, bool innerBoxIsScrolled) {
+              return [
+                SliverToBoxAdapter(
+                  child: Container(height: MediaQuery.of(context).padding.top),
                 ),
+                SliverToBoxAdapter(
+                  child: SearchBar(
+                    onSaucenao: () {
+                      if (userSetting.useSaunceNaoWebview) {
+                        Leader.push(context, SauncenaoWebview());
+                      } else {
+                        _sauceStore.findImage(context: context);
+                      }
+                    },
+                  ),
+                )
+              ];
+            },
+          );
+        return Column(children: <Widget>[
+          AppBar(
+            automaticallyImplyLeading: false,
+            title: Text(
+              I18n.of(context).search,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            actions: <Widget>[
+              IconButton(
+                icon: Icon(
+                  Icons.search,
+                ),
+                onPressed: () {
+                  Navigator.of(context, rootNavigator: true).push(
+                      MaterialPageRoute(
+                          builder: (context) => SearchSuggestionPage()));
+                },
               )
-            ];
-          },
-        );
+            ],
+          ),
+        ]);
       });
     });
   }
