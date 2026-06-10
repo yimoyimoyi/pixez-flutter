@@ -63,6 +63,13 @@ class _PainterAvatarState extends State<PainterAvatar> {
                         image: imageProvider, fit: BoxFit.cover),
                   ),
                 ),
+                placeholder: (context, url) => Container(
+                  width: 60.0,
+                  height: 60.0,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Theme.of(context).cardColor),
+                ),
                 httpHeaders: Hoster.header(url: widget.url),
                 cacheManager: pixivCacheManager,
                 errorWidget: (context, url, error) => Container(
@@ -76,6 +83,13 @@ class _PainterAvatarState extends State<PainterAvatar> {
             : CachedNetworkImage(
                 imageUrl: widget.url,
                 cacheManager: pixivCacheManager,
+                placeholder: (context, url) => Container(
+                  width: widget.size!.width,
+                  height: widget.size!.height,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Theme.of(context).cardColor),
+                ),
                 errorWidget: (context, url, error) => Container(
                   width: widget.size!.width,
                   height: widget.size!.height,
