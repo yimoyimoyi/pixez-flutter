@@ -69,7 +69,11 @@ class UploadedImageSpan extends WidgetSpan {
                   await _saveUploadedImage(context, imageUrl);
                 }
               },
-              child: Container(child: PixivImage(imageUrl)),
+              child: Container(
+                color: Colors.grey.shade200,
+                child: PixivImage(imageUrl,
+                    width: double.infinity, fit: BoxFit.fitWidth),
+              ),
             );
           },
         ),
@@ -161,10 +165,15 @@ class PixivImageSpan extends WidgetSpan {
               child: (illusts != null)
                   ? Padding(
                       padding: const EdgeInsets.all(16.0),
-                      child: PixivImage(
-                        illusts.illust.images.medium ??
-                            illusts.illust.images.original ??
-                            illusts.illust.images.small!,
+                      child: Container(
+                        color: Colors.grey.shade200,
+                        child: PixivImage(
+                          illusts.illust.images.medium ??
+                              illusts.illust.images.original ??
+                              illusts.illust.images.small!,
+                          width: double.infinity,
+                          fit: BoxFit.fitWidth,
+                        ),
                       ),
                     )
                   : FutureBuilder(
@@ -179,17 +188,17 @@ class PixivImageSpan extends WidgetSpan {
                                 snapshot.data != null)
                               return Padding(
                                 padding: const EdgeInsets.all(16.0),
-                                child: targetIndex != 0
-                                    ? PixivImage(
-                                        snapshot
-                                            .data!
-                                            .metaPages[targetIndex]
-                                            .imageUrls!
-                                            .medium,
-                                      )
-                                    : PixivImage(
-                                        snapshot.data!.imageUrls.medium,
-                                      ),
+                                child: Container(
+                                  color: Colors.grey.shade200,
+                                  child: PixivImage(
+                                    targetIndex != 0
+                                        ? snapshot.data!.metaPages[targetIndex]
+                                            .imageUrls!.medium
+                                        : snapshot.data!.imageUrls.medium,
+                                    width: double.infinity,
+                                    fit: BoxFit.fitWidth,
+                                  ),
+                                ),
                               );
 
                             return Container();
