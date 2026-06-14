@@ -20,6 +20,7 @@ import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
 import 'package:pixez/er/hoster.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/network/network_mode.dart';
@@ -46,6 +47,8 @@ class PixivImage extends StatefulWidget {
   final double? width;
   final String? host;
   final String? errorHint;
+  /// 瀑布流中的位置索引（可为 null 表示不参与优先级协调）
+  final int? priorityIndex;
 
   PixivImage(
     this.url, {
@@ -57,6 +60,7 @@ class PixivImage extends StatefulWidget {
     this.host,
     this.width,
     this.errorHint,
+    this.priorityIndex,
   });
 
   @override
@@ -111,6 +115,13 @@ class _PixivImageState extends State<PixivImage> {
   int _retryCount = 0;
   String? _lastKey;
 
+  // 优先级协调状态
+  bool _canLoad = true;
+  bool _slotReleased = false;
+  String? _registeredUrl;
+
+  ImageLoadCoordinator get _coordinator => ImageLoadCoordinator.instance;
+
   @override
   void initState() {
     url = widget.url;
@@ -121,19 +132,93 @@ class _PixivImageState extends State<PixivImage> {
     fade = widget.fade;
     placeWidget = widget.placeWidget;
     super.initState();
+
+    // 如果参与了优先级协调，立即注册槽位（同步，无帧延迟）
+    if (widget.priorityIndex != null) {
+      _canLoad = false;
+      _registeredUrl = widget.url;
+      _requestSlot();
+    }
   }
 
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
+      // 取消旧 URL 的协调器注册
+      if (oldWidget.url.isNotEmpty) {
+        _coordinator.cancel(oldWidget.url);
+      }
       _retryCount = 0;
+      _slotReleased = false;
       setState(() {
         url = widget.url;
         width = widget.width;
         height = widget.height;
       });
+      // 重新请求槽位
+      if (widget.priorityIndex != null) {
+        _canLoad = false;
+        _registeredUrl = widget.url;
+        _requestSlot();
+      }
     }
+  }
+
+  /// 向协调器请求加载槽位（同步，无延迟）。
+  void _requestSlot() {
+    final targetUrl = widget.url;
+    if (targetUrl.isEmpty) return;
+
+    final granted = _coordinator.register(
+      targetUrl,
+      widget.priorityIndex ?? 0,
+      _onSlotReady,
+    );
+    if (granted) {
+      _slotReleased = false;
+      if (mounted) setState(() => _canLoad = true);
+    }
+
+    // 后台检查缓存：如果在排队中且缓存命中，绕过协调器立即显示
+    _tryCacheBypass(targetUrl);
+  }
+
+  /// 后台检查文件缓存，命中则立即显示并释放排队槽位
+  Future<void> _tryCacheBypass(String targetUrl) async {
+    if (_canLoad) return;
+    try {
+      final resolvedUrl = PixivImageSource.resolve(
+        targetUrl,
+        networkMode: userSetting.networkMode,
+        pictureSource: userSetting.pictureSource,
+      );
+      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
+      if (fileInfo != null && mounted && !_canLoad) {
+        final bytes = fileInfo.file.readAsBytesSync();
+        if (bytes.isNotEmpty) {
+          _coordinator.cancel(targetUrl);
+          setState(() => _canLoad = true);
+        }
+      }
+    } catch (_) {
+      // 缓存检查失败，继续排队等待
+    }
+  }
+
+  /// 协调器分配槽位后的回调
+  void _onSlotReady() {
+    if (!mounted) return;
+    if (_registeredUrl != widget.url) return;
+    _slotReleased = false;
+    setState(() => _canLoad = true);
+  }
+
+  /// 释放槽位
+  void _releaseSlot() {
+    if (_slotReleased) return;
+    _slotReleased = true;
+    _coordinator.release(widget.url);
   }
 
   void _scheduleRetry() {
@@ -151,11 +236,27 @@ class _PixivImageState extends State<PixivImage> {
   Widget build(BuildContext context) {
     final currentKey = url;
     if (_lastKey != currentKey) { _lastKey = currentKey; }
+
+    // 优先级协调：尚未获得槽位时显示占位符
+    if (!_canLoad) {
+      return widget.placeWidget ?? Container(height: height);
+    }
+
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
       placeholder: (context, url) =>
           widget.placeWidget ?? Container(height: height),
+      imageBuilder: (context, imageProvider) {
+        _releaseSlot();
+        return Image(
+          image: imageProvider,
+          fit: fit ?? BoxFit.fitWidth,
+          width: width,
+          height: height,
+        );
+      },
       errorWidget: (context, url, error) {
+        _releaseSlot();
         _scheduleRetry();
         final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
             ? Uri.parse(url).pathSegments.last
@@ -194,6 +295,12 @@ class _PixivImageState extends State<PixivImage> {
       fit: fit ?? BoxFit.fitWidth,
       httpHeaders: Hoster.header(url: url),
     );
+  }
+
+  @override
+  void dispose() {
+    _coordinator.cancel(widget.url);
+    super.dispose();
   }
 }
 

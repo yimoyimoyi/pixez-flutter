@@ -189,7 +189,11 @@ abstract class _UgoiraStoreBase with Store {
             ),
           ),
         );
-        if (userSetting.networkMode.usesCompatibleConnection) {
+        // 仅在直连 Pixiv（未设置自定义图床）时使用 rhttp 兼容客户端（SNI 绕过）
+        // 自定义图床走系统默认 HTTP 客户端，避免 SNI 关闭导致 Cloudflare TLS 握手失败
+        final useCompat = userSetting.networkMode.usesCompatibleConnection &&
+                          userSetting.pictureSource == PixivImageSource.imageHost;
+        if (useCompat) {
           dio.httpClientAdapter = await ApiClient.createCompatibleClient();
         }
         // 下载重试：最多 3 次

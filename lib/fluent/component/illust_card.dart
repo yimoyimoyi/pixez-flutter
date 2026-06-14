@@ -41,12 +41,15 @@ class IllustCard extends StatefulWidget {
   final List<IllustStore>? iStores;
   final bool needToBan;
   final LightingStore lightingStore;
+  /// 瀑布流中的位置索引，用于图片加载优先级协调
+  final int? index;
 
   IllustCard({
     required this.store,
     required this.lightingStore,
     this.iStores,
     this.needToBan = false,
+    this.index,
   });
 
   @override
@@ -224,6 +227,7 @@ class _IllustCardState extends State<IllustCard> {
             child: PixivImage(
               store.illusts!.imageUrls.squareMedium,
               fit: BoxFit.fitWidth,
+              priorityIndex: widget.index,
             ),
           )
         : NullHero(
@@ -231,6 +235,7 @@ class _IllustCardState extends State<IllustCard> {
             child: PixivImage(
               url,
               fit: BoxFit.fitWidth,
+              priorityIndex: widget.index,
             ),
           );
   }

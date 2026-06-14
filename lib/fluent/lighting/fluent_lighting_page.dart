@@ -21,6 +21,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:mobx/mobx.dart';
 import 'package:pixez/component/pixez_default_header.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/fluent/component/illust_card.dart';
 import 'package:pixez/exts.dart';
 import 'package:pixez/utils.dart';
@@ -101,12 +102,32 @@ class _LightingListState extends State<LightingList> {
       widget.source,
     );
     _store.easyRefreshController = _refreshController;
+
+    // 添加滚动监听，更新图片加载协调器的可视范围
+    if (widget.scrollController == null && !_isNested) {
+      _scrollController.addListener(_onScrollUpdate);
+    }
+
     super.initState();
     _store.fetch();
 
     // Load More Detecter
     _disableListener =
         initializeScrollController(_scrollController, _store.fetchNext);
+  }
+
+  void _onScrollUpdate() {
+    if (!_scrollController.hasClients) return;
+    final metrics = _scrollController.position;
+    const approxItemHeight = 280.0;
+    final start = (metrics.pixels / approxItemHeight)
+        .floor()
+        .clamp(0, _store.iStores.length);
+    final end =
+        ((metrics.pixels + metrics.viewportDimension) / approxItemHeight)
+            .ceil()
+            .clamp(0, _store.iStores.length);
+    ImageLoadCoordinator.instance.updateVisibleRange(start, end);
   }
 
   @override
@@ -275,6 +296,7 @@ class _LightingListState extends State<LightingList> {
     _store.iStores.removeWhere((element) => element.illusts!.hateByUser());
     return SliverChildBuilderDelegate((BuildContext context, int index) {
       return IllustCard(
+        index: index,
         store: _store.iStores[index],
         lightingStore: _store,
         iStores: _store.iStores,
@@ -311,6 +333,7 @@ class _LightingListState extends State<LightingList> {
 
   Widget _buildItem(int index) {
     return IllustCard(
+      index: index,
       store: _store.iStores[index],
       lightingStore: _store,
       iStores: _store.iStores,

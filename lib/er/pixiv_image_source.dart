@@ -50,13 +50,13 @@ class PixivImageSource {
     required NetworkMode networkMode,
     required String? pictureSource,
   }) {
-    if (!networkMode.allowsImageSource) return uri;
+    // 自定义图床 URL 改写：只要设置了非默认的 pictureSource 即改写，
+    // 不受 networkMode 限制（与 fetcher 下载隔离修复保持一致）
+    final source = pictureSource?.trim();
+    if (source == null || source.isEmpty || source == imageHost) return uri;
+
     // 匹配所有 Pixiv 图片域名（i.pximg.net / s.pximg.net / *.pximg.net 等）
     if (!_isPixivImageHost(uri.host)) return uri;
-
-    final source = pictureSource?.trim();
-    if (source == null || source.isEmpty) return uri;
-    if (source == imageHost) return uri;
 
     return _withSource(uri, source);
   }
