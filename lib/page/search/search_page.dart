@@ -212,7 +212,7 @@ class _SearchPageState extends State<SearchPage>
                       .toList();
                   if (targetTags.isEmpty) return Container();
 
-                  const pageSize = 80;
+                  const pageSize = 50;
                   final total = targetTags.length;
                   final maxPage = (total - 1) ~/ pageSize;
                   if (_tagPage > maxPage) _tagPage = maxPage;

@@ -190,7 +190,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                     .where((e) => e.type == 1)
                     .toList();
                 if (tags.isEmpty) return Container();
-                const pageSize = 24;
+                const pageSize = 50;
                 final maxPage = (tags.length - 1) ~/ pageSize;
                 if (_tagPage > maxPage) _tagPage = maxPage;
                 final start = _tagPage * pageSize;

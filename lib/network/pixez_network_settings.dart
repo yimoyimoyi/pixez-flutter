@@ -44,12 +44,16 @@ class PixezNetworkSettings {
       tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
-          // 优先使用预配置的源站 IP 池（参考 Pixiv-Nginx）
-          final ips = _compatibleIps(host);
-          if (ips.isNotEmpty) return ips;
-          // 回退到 DNS 缓存结果
+          // 优先使用 DoH 动态缓存的 IP（能自动适应 Pixiv 服务器迁移）
           final cached = _compatibleCachedIp(host);
-          if (cached != null) return [cached];
+          // 源站 IP 池作为静态备用参考
+          final poolIps = _compatibleIps(host);
+          final allIps = <String>{};
+          if (cached != null) allIps.add(cached);
+          for (final ip in poolIps) {
+            allIps.add(ip);
+          }
+          if (allIps.isNotEmpty) return allIps.toList();
           // 最后走系统 DNS
           return await InternetAddress.lookup(
             host,
