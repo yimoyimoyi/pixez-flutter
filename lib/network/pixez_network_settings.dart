@@ -44,16 +44,12 @@ class PixezNetworkSettings {
       tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
-          // 优先使用 DoH 动态缓存的 IP（能自动适应 Pixiv 服务器迁移）
-          final cached = _compatibleCachedIp(host);
-          // 源站 IP 池作为静态备用参考
+          // 优先使用 DoH 动态缓存的 IP 池（能自动适应 Pixiv 服务器迁移）
+          final cachedIps = _compatibleCachedIps(host);
+          if (cachedIps.isNotEmpty) return cachedIps;
+          // 源站硬编码 IP 池作为静态备用
           final poolIps = _compatibleIps(host);
-          final allIps = <String>{};
-          if (cached != null) allIps.add(cached);
-          for (final ip in poolIps) {
-            allIps.add(ip);
-          }
-          if (allIps.isNotEmpty) return allIps.toList();
+          if (poolIps.isNotEmpty) return poolIps;
           // 最后走系统 DNS
           return await InternetAddress.lookup(
             host,
@@ -61,6 +57,11 @@ class PixezNetworkSettings {
         },
       ),
     );
+  }
+
+  /// 返回 DoH 动态缓存的 IP 列表（可能为空）
+  static List<String> _compatibleCachedIps(String host) {
+    return Hoster.cachedIps(host);
   }
 
   /// 返回源站 IP 池（多 IP，参考 Pixiv-Nginx upstream）
@@ -76,14 +77,5 @@ class PixezNetworkSettings {
       return Hoster.imagePool();
     }
     return const [];
-  }
-
-  /// 返回 DNS 缓存的单个 IP（回退用）
-  static String? _compatibleCachedIp(String host) {
-    if (host == appApiHost) return Hoster.api();
-    if (host == oauthHost) return Hoster.oauth();
-    if (host == imageHost) return Hoster.iPximgNet();
-    if (host == imageStaticHost) return Hoster.sPximgNet();
-    return null;
   }
 }

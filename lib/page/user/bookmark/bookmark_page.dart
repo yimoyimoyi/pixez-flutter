@@ -203,7 +203,8 @@ class BookMarkNestedPage extends StatefulWidget {
   State<BookMarkNestedPage> createState() => _BookMarkNestedPageState();
 }
 
-class _BookMarkNestedPageState extends State<BookMarkNestedPage> {
+class _BookMarkNestedPageState extends State<BookMarkNestedPage>
+    with AutomaticKeepAliveClientMixin {
   late ScrollController _scrollController;
   late EasyRefreshController _easyRefreshController;
   late LightingStore _store;
@@ -229,6 +230,9 @@ class _BookMarkNestedPageState extends State<BookMarkNestedPage> {
     _easyRefreshController.dispose();
     super.dispose();
   }
+
+  @override
+  bool get wantKeepAlive => true;
 
   Widget _buildWorks(BuildContext context) {
     return SafeArea(

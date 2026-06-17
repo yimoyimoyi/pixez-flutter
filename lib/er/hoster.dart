@@ -90,13 +90,23 @@ class Hoster {
   }
 
   static Future<void> dnsQueryAll() async {
-    for (var key in [ImageHost, ImageSHost]) {
+    for (var key in [
+      ImageHost,
+      ImageSHost,
+      'app-api.pixiv.net',
+      'oauth.secure.pixiv.net',
+    ]) {
       await dnsQuery(key);
     }
   }
 
   static Future<void> dnsQueryFetcher() async {
-    for (var key in [ImageHost, ImageSHost]) {
+    for (var key in [
+      ImageHost,
+      ImageSHost,
+      'app-api.pixiv.net',
+      'oauth.secure.pixiv.net',
+    ]) {
       await dnsQuery(key);
     }
   }
@@ -144,21 +154,34 @@ class Hoster {
       if (model == null) {
         model = OnezeroResponse.fromJson({"Answer": []});
       }
-      final answer = model.answer.toList();
-      answer.sort((l, r) => r.ttl.compareTo(l.ttl));
-      final host = answer.first.data;
-      if (host.contains('.')) {
-        final num = host.split('.');
-        bool allNum = num.every((element) => int.tryParse(element) != null);
-        if (allNum) {
-          _map[name] = host;
-          Prefer.setString('h_hoster_$name', host);
-        }
+      final answers = model.answer.toList();
+      answers.sort((l, r) => r.ttl.compareTo(l.ttl));
+      // 收集所有有效 IPv4 地址
+      final ips = answers
+          .map((a) => a.data)
+          .where((ip) =>
+              ip.contains('.') &&
+              ip.split('.').every((e) => int.tryParse(e) != null))
+          .toList();
+      if (ips.isNotEmpty) {
+        _map[name] = ips.join(',');
+        Prefer.setString('h_hoster_$name', ips.join(','));
       }
-      LPrinter.d(host);
+      LPrinter.d(ips.join(','));
     } catch (e) {
       LPrinter.d(e);
     }
+  }
+
+  /// 获取指定域名的动态缓存 IP 列表（逗号分隔），与 _constMap 值格式兼容
+  static List<String> cachedIps(String host) {
+    final result = _map[host] as String?;
+    if (result == null || result.isEmpty) {
+      final fallback = _constMap[host] as String?;
+      if (fallback == null || fallback.isEmpty) return [];
+      return fallback.split(',');
+    }
+    return result.split(',');
   }
 
   static String iPximgNet() {

@@ -50,7 +50,8 @@ class WorksPage extends StatefulWidget {
   _WorksPageState createState() => _WorksPageState();
 }
 
-class _WorksPageState extends State<WorksPage> {
+class _WorksPageState extends State<WorksPage>
+    with AutomaticKeepAliveClientMixin {
   late LightingStore _store;
   late EasyRefreshController _easyRefreshController;
   late String _workType;
@@ -72,6 +73,9 @@ class _WorksPageState extends State<WorksPage> {
     _store.dispose();
     super.dispose();
   }
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   Widget build(BuildContext context) {
