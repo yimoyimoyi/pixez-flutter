@@ -53,20 +53,22 @@ abstract class _SoupStoreBase with Store {
     logText += '$msg\n';
   }
 
-  // 已验证可访问 pixivision 的 Pixiv 源站 IP
+  // 已验证可访问 pixivision 的 Pixiv 源站 IP（2026-06-17 实测：155 已死）
   static const _visionIps = [
     '210.140.139.154',
-    '210.140.139.155',
     '210.140.139.156',
     '210.140.139.157',
     '210.140.139.158',
     '210.140.139.159',
+    '210.140.139.160',
+    '210.140.139.161',
   ];
 
   Future<Dio> _createDio() async {
     _log('creating rhttp client...');
     final client = await r.RhttpCompatibleClient.create(
       settings: r.ClientSettings(
+        httpVersionPref: r.HttpVersionPref.http1_1,
         tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
         dnsSettings: r.DnsSettings.static(
           overrides: {

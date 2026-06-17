@@ -21,9 +21,9 @@ class _AppCachePageState extends State<AppCachePage> {
   }
 
   Future<void> _refreshSizes() async {
-    final appDir = await getApplicationSupportDirectory();
-    // 图片缓存目录（与 pixivCacheManager 一致）
-    final dioCache = Directory('${appDir.path}/dioCache');
+    // 图片缓存目录（与 pixivCacheManager 一致，位于临时目录）
+    final tmpDir = await getTemporaryDirectory();
+    final dioCache = Directory('${tmpDir.path}/dioCache');
     int imageBytes = 0;
     if (await dioCache.exists()) {
       await for (final f in dioCache.list(recursive: true)) {
@@ -31,6 +31,7 @@ class _AppCachePageState extends State<AppCachePage> {
       }
     }
     // 小说正文缓存
+    final appDir = await getApplicationSupportDirectory();
     final novelCache = Directory('${appDir.path}/novel_text_cache');
     int novelBytes = 0;
     if (await novelCache.exists()) {
@@ -69,8 +70,8 @@ class _AppCachePageState extends State<AppCachePage> {
       // 清空 pixivCacheManager
       await pixivCacheManager?.emptyCache();
       // 清空 dioCache 目录
-      final appDir = await getApplicationSupportDirectory();
-      final dioCache = Directory('${appDir.path}/dioCache');
+      final tmpDir = await getTemporaryDirectory();
+      final dioCache = Directory('${tmpDir.path}/dioCache');
       if (await dioCache.exists()) {
         await dioCache.delete(recursive: true);
         await dioCache.create();
