@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/lprinter.dart';
@@ -12,8 +16,8 @@ import 'package:rhttp/rhttp.dart' as r;
 class Hoster {
   static Map<String, dynamic> _map = Map();
   static Map<String, dynamic> _constMap = {
-    "app-api.pixiv.net": "210.140.139.155",
-    "oauth.secure.pixiv.net": "210.140.139.155",
+    "app-api.pixiv.net": "210.140.139.154",
+    "oauth.secure.pixiv.net": "210.140.139.154",
     "i.pximg.net": "210.140.139.133",
     "s.pximg.net": "210.140.139.133",
     "doh": "https://77.88.8.1/dns-query", // Yandex DNS (主)
@@ -26,24 +30,22 @@ class Hoster {
     "https://130.59.31.251/dns-query", // switch.ch DNS (备)
   ];
 
-  /// Pixiv API 源站 IP 池（已知可用在前，新增在后作备用）
+  /// Pixiv API 源站 IP 池（2026-06-17 实测 SNI_OFF 可用）
+  /// .154/.156-.161：app-api + oauth 均正常
+  /// .162：app-api 正常，oauth 超时，移除
+  /// .155：已死，移除
+  /// .137/.138/.149/.150：API 返回 421，移至图片池
   static const _apiIpPool = [
     '210.140.139.154',
-    '210.140.139.155',
     '210.140.139.156',
     '210.140.139.157',
     '210.140.139.158',
     '210.140.139.159',
     '210.140.139.160',
     '210.140.139.161',
-    '210.140.139.162',
-    '210.140.139.137',
-    '210.140.139.138',
-    '210.140.139.149',
-    '210.140.139.150',
   ];
 
-  /// Pixiv 图片源站 IP 池（已知可用在前；210.140.92.* 超时已移除）
+  /// Pixiv 图片源站 IP 池（2026-06-17 实测 SNI_OFF 可用，全 10 个 OK）
   static const _imageIpPool = [
     '210.140.139.131',
     '210.140.139.132',
@@ -182,6 +184,76 @@ class Hoster {
       return fallback.split(',');
     }
     return result.split(',');
+  }
+
+  /// TCP 443 端口探测，筛出可连通的 IP（无须代理无须 DNS）
+  static Future<List<String>> tcpProbe(
+    List<String> ips, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final alive = <String>[];
+    await Future.wait(ips.map((ip) async {
+      try {
+        final s = await Socket.connect(ip, 443, timeout: timeout);
+        await s.close();
+        alive.add(ip);
+      } catch (_) {}
+    }));
+    return alive;
+  }
+
+  /// 通过代理预热 DNS 缓存（供 compat 模式无代理时使用）
+  static Future<void> warmUpDns(String proxyHost, int proxyPort) async {
+    final dio = Dio();
+    dio.options.connectTimeout = const Duration(seconds: 5);
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () {
+        final client = HttpClient();
+        client.findProxy = (url) => 'PROXY $proxyHost:$proxyPort';
+        client.badCertificateCallback = (cert, host, port) => true;
+        return client;
+      },
+    );
+
+    final servers = [
+      (_map["doh"] as String?) ?? _constMap["doh"] as String,
+      ..._fallbackDohServers,
+    ];
+
+    for (final host in [
+      'app-api.pixiv.net',
+      'oauth.secure.pixiv.net',
+      ImageHost,
+      ImageSHost,
+    ]) {
+      for (final server in servers) {
+        try {
+          final resp = await dio.get(
+            server,
+            queryParameters: {'name': host, 'type': 'A'},
+            options: Options(headers: {'accept': 'application/dns-json'}),
+          );
+          final model = OnezeroResponse.fromJson(jsonDecode(resp.data));
+          if (model.answer.isNotEmpty) {
+            final ips = model.answer
+                .map((a) => a.data)
+                .where((ip) =>
+                    ip.contains('.') &&
+                    ip.split('.').every((e) => int.tryParse(e) != null))
+                .toList();
+            if (ips.isNotEmpty) {
+              _map[host] = ips.join(',');
+              Prefer.setString('h_hoster_$host', ips.join(','));
+              LPrinter.d('warmUpDns $host -> ${ips.join(",")}');
+            }
+            break;
+          }
+        } catch (e) {
+          LPrinter.d('warmUpDns $server for $host: $e');
+          continue;
+        }
+      }
+    }
   }
 
   static String iPximgNet() {

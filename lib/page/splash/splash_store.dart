@@ -59,6 +59,21 @@ abstract class _SplashStoreBase with Store {
     try {
       await Hoster.dnsQueryAll();
     } catch (e) {}
+    // 直接 DoH 失败时，尝试通过常见本地代理预热 DNS 缓存
+    if (Hoster.cachedIps('app-api.pixiv.net').isEmpty) {
+      for (final proxy in const [
+        ('127.0.0.1', 7897),
+        ('127.0.0.1', 7890),
+        ('127.0.0.1', 10808),
+        ('127.0.0.1', 1080),
+        ('127.0.0.1', 8080),
+      ]) {
+        try {
+          await Hoster.warmUpDns(proxy.$1, proxy.$2);
+          if (Hoster.cachedIps('app-api.pixiv.net').isNotEmpty) break;
+        } catch (_) {}
+      }
+    }
     this.host = Hoster.iPximgNet();
     helloWord = OK_TEXT;
   }

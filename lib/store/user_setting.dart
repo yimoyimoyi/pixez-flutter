@@ -428,9 +428,7 @@ abstract class _UserSetting with Store {
     isTopMode = prefs.getBool(IS_TOPMODE_KEY) ?? false;
     languageNum = prefs.getInt(LANGUAGE_NUM_KEY) ?? 0;
     await _restoreNetworkMode();
-    pictureSource = networkMode.allowsImageSource
-        ? (prefs.getString(PICTURE_SOURCE_KEY) ?? ImageHost)
-        : ImageHost;
+    pictureSource = prefs.getString(PICTURE_SOURCE_KEY) ?? ImageHost;
     ApiClient.Accept_Language = languageList[languageNum];
     await _applyNetworkClients();
     apiClient.httpClient.options.headers[HttpHeaders.acceptLanguageHeader] =
@@ -644,13 +642,9 @@ abstract class _UserSetting with Store {
   setNetworkMode(NetworkMode value) async {
     await prefs.setString(NETWORK_MODE_KEY, value.code);
     networkMode = value;
-    if (!value.allowsImageSource) {
-      pictureSource = ImageHost;
-      splashStore.setHost(ImageHost);
-    } else {
-      pictureSource = prefs.getString(PICTURE_SOURCE_KEY) ?? ImageHost;
-      splashStore.setHost(pictureSource!);
-    }
+    // 始终从 prefs 恢复图床设置，不因切换模式丢失
+    pictureSource = prefs.getString(PICTURE_SOURCE_KEY) ?? ImageHost;
+    splashStore.setHost(pictureSource!);
     await _applyNetworkClients();
     fetcher.reloadNetwork();
   }
