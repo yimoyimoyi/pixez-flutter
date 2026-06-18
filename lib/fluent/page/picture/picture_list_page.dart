@@ -1,19 +1,3 @@
-/*
- * Copyright (C) 2020. by perol_notsf, All rights reserved
- *
- * This program is free software: you can redistribute it and/or modify it under
- * the terms of the GNU General Public License as published by the Free Software
- * Foundation, either version 3 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program. If not, see <http://www.gnu.org/licenses/>.
- *
- */
-
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/lighting/lighting_store.dart';
@@ -46,6 +30,10 @@ class _PictureListPageState extends State<PictureListPage> {
   late IllustStore _store;
   double screenWidth = 0;
 
+  // 累积拖拽位移
+  double _dragTotalDx = 0;
+  double _dragTotalDy = 0;
+
   @override
   void initState() {
     _store = widget.store;
@@ -72,7 +60,7 @@ class _PictureListPageState extends State<PictureListPage> {
             Observer(builder: (_) {
               return PageView.builder(
                 controller: _pageController,
-                physics: NeverScrollableScrollPhysics(),
+                physics: const NeverScrollableScrollPhysics(),
                 itemBuilder: (BuildContext context, int index) {
                   if (index == _iStores.length && _lightingStore != null) {
                     return PictureListNextPage(
@@ -91,30 +79,39 @@ class _PictureListPageState extends State<PictureListPage> {
               );
             }),
             Container(
-              margin: EdgeInsets.all(24),
+              margin: const EdgeInsets.all(24),
               child: GestureDetector(
-                onHorizontalDragEnd: (DragEndDetails detail) {
-                  final pixelsPerSecond = detail.velocity.pixelsPerSecond;
-                  if (pixelsPerSecond.dy.abs() > pixelsPerSecond.dx.abs())
-                    return;
-                  if (pixelsPerSecond.dx.abs() > screenWidth) {
-                    int result = nowPosition;
-                    if (pixelsPerSecond.dx < 0)
-                      result++;
-                    else
-                      result--;
-                    _pageController.animateToPage(result,
-                        duration: Duration(milliseconds: 200),
-                        curve: Curves.easeInOut);
-                    if (result >= _iStores.length) result = _iStores.length - 1;
-                    if (result < 0) result = 0;
-                    setState(() {
-                      nowPosition = result;
-                    });
-                  }
+                onHorizontalDragStart: (_) {
+                  _dragTotalDx = 0;
+                  _dragTotalDy = 0;
+                },
+                onHorizontalDragUpdate: (details) {
+                  _dragTotalDx += details.delta.dx;
+                  _dragTotalDy += details.delta.dy;
+                },
+                onHorizontalDragEnd: (details) {
+                  final v = details.velocity.pixelsPerSecond;
+
+                  // 判定 1：速度水平占主导
+                  if (v.dx.abs() <= v.dy.abs() * 1.5) return;
+
+                  // 判定 2：累积位移水平占主导
+                  if (_dragTotalDx.abs() <= _dragTotalDy.abs() * 1.5) return;
+
+                  // 判定 3：水平速度够大
+                  if (v.dx.abs() <= screenWidth) return;
+
+                  int result = nowPosition;
+                  if (v.dx < 0) { result++; } else { result--; }
+                  result = result.clamp(0, _iStores.length - 1);
+
+                  _pageController.animateToPage(result,
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut);
+                  setState(() => nowPosition = result);
                 },
               ),
-            )
+            ),
           ],
         );
       },
@@ -133,6 +130,7 @@ class PictureListNextPage extends StatefulWidget {
 class _PictureListNextPageState extends State<PictureListNextPage> {
   late LightingStore _lightingStore;
   bool? loadResult;
+
   @override
   void initState() {
     _lightingStore = widget.lightingStore;
@@ -143,17 +141,9 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
   _maybeFetch(bool firstIn) async {
     if (_lightingStore.nextUrl == null) return;
     try {
-      if (!firstIn) {
-        setState(() {
-          loadResult = null;
-        });
-      }
+      if (!firstIn) setState(() => loadResult = null);
       final result = await _lightingStore.fetchNext();
-      if (mounted) {
-        setState(() {
-          loadResult = result;
-        });
-      }
+      if (mounted) setState(() => loadResult = result);
     } catch (e) {}
   }
 
@@ -161,30 +151,25 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
   Widget build(BuildContext context) {
     if (_lightingStore.nextUrl == null) {
       return ScaffoldPage(
-        header: PageHeader(),
-        content: Center(child: Text("No More")),
+        header: const PageHeader(),
+        content: const Center(child: Text("No More")),
       );
     }
     if (loadResult == false) {
       return ScaffoldPage(
-        header: PageHeader(),
-        content: Container(
-            child: Center(
+        header: const PageHeader(),
+        content: Center(
           child: Column(children: [
-            Text("Load Failed"),
+            const Text("Load Failed"),
             HyperlinkButton(
-                onPressed: () {
-                  _maybeFetch(false);
-                },
-                child: Text("Retry"))
+                onPressed: () => _maybeFetch(false),
+                child: const Text("Retry")),
           ]),
-        )),
+        ),
       );
     }
-    return ScaffoldPage(
-      content: Center(
-        child: ProgressRing(),
-      ),
+    return const ScaffoldPage(
+      content: Center(child: ProgressRing()),
     );
   }
 }

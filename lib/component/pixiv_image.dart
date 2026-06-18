@@ -14,6 +14,7 @@
  *
  */
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -183,6 +184,7 @@ class _PixivImageState extends State<PixivImage> {
   bool _canLoad = true;
   bool _slotReleased = false;
   String? _registeredUrl;
+  Timer? _slotTimer; // 槽位超时保护
 
   ImageLoadCoordinator get _coordinator => ImageLoadCoordinator.instance;
 
@@ -305,11 +307,34 @@ class _PixivImageState extends State<PixivImage> {
     );
     if (granted) {
       _slotReleased = false;
+      _startSlotTimer();
       if (mounted) setState(() => _canLoad = true);
     }
 
     // 后台检查缓存：如果在排队中且缓存命中，绕过协调器立即显示
     _tryCacheBypass(targetUrl);
+  }
+
+  /// 启动槽位超时保护定时器
+  void _startSlotTimer() {
+    _slotTimer?.cancel();
+    _slotTimer = Timer(const Duration(seconds: 30), _onSlotTimeout);
+  }
+
+  /// 槽位超时：释放当前槽位并强制重试
+  void _onSlotTimeout() {
+    if (!mounted) return;
+    _coordinator.release(widget.url);
+    _slotReleased = true;
+    _slotTimer = null;
+    // 重置状态，重新请求槽位
+    _canLoad = false;
+    _retryCount = 0;
+    _cachedBytes = null;
+    if (mounted) {
+      setState(() {});
+      _requestSlot();
+    }
   }
 
   /// 后台检查文件缓存，命中则立即显示并释放排队槽位
@@ -341,6 +366,7 @@ class _PixivImageState extends State<PixivImage> {
     if (!mounted) return;
     if (_registeredUrl != widget.url) return;
     _slotReleased = false;
+    _startSlotTimer();
     setState(() => _canLoad = true);
   }
 
@@ -348,6 +374,8 @@ class _PixivImageState extends State<PixivImage> {
   void _releaseSlot() {
     if (_slotReleased) return;
     _slotReleased = true;
+    _slotTimer?.cancel();
+    _slotTimer = null;
     _coordinator.release(widget.url);
   }
 
@@ -458,6 +486,7 @@ class _PixivImageState extends State<PixivImage> {
 
   @override
   void dispose() {
+    _slotTimer?.cancel();
     _coordinator.cancel(widget.url);
     super.dispose();
   }

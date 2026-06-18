@@ -1,20 +1,3 @@
-/*
- * Copyright (C) 2020. by perol_notsf, All rights reserved
- *
- * This program is free software: you can redistribute it and/or modify it under
- * the terms of the GNU General Public License as published by the Free Software
- * Foundation, either version 3 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program. If not, see <http://www.gnu.org/licenses/>.
- *
- */
-
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/lighting/lighting_store.dart';
@@ -48,6 +31,14 @@ class _PictureListPageState extends State<PictureListPage> {
   late IllustStore _store;
   double screenWidth = 0;
 
+  // 方向追踪
+  Offset? _pointerDownPos;
+  double _totalDx = 0;
+  double _totalDy = 0;
+  bool _pointerIsDown = false;
+  int _dragStartPage = 0;
+  bool _evaluating = false;
+
   @override
   void initState() {
     _store = widget.store;
@@ -64,18 +55,68 @@ class _PictureListPageState extends State<PictureListPage> {
     super.dispose();
   }
 
+  void _onPointerDown(PointerDownEvent e) {
+    _pointerDownPos = e.position;
+    _totalDx = 0;
+    _totalDy = 0;
+    _pointerIsDown = true;
+    _dragStartPage = nowPosition;
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (!_pointerIsDown || _pointerDownPos == null) return;
+    _totalDx = e.position.dx - _pointerDownPos!.dx;
+    _totalDy = e.position.dy - _pointerDownPos!.dy;
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    _pointerIsDown = false;
+    // 等 PageView snap/fling 动画结束后判定
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _evaluateSwipe();
+    });
+  }
+
+  void _evaluateSwipe() {
+    if (_evaluating) return;
+    final currentPage = _pageController.page?.round() ?? nowPosition;
+    if (currentPage == _dragStartPage) return;
+
+    // 判定 1：方向需偏向水平
+    if (_totalDx.abs() <= _totalDy.abs() * 1.5) {
+      _bounceBack();
+      return;
+    }
+    // 判定 2：水平位移需超过屏幕宽度 50%
+    if (_totalDx.abs() < screenWidth) {
+      _bounceBack();
+      return;
+    }
+    // 接受
+    setState(() => nowPosition = currentPage);
+  }
+
+  void _bounceBack() {
+    _evaluating = true;
+    _pageController.animateToPage(_dragStartPage,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut)
+      .then((_) => _evaluating = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     screenWidth = MediaQuery.of(context).size.width / 2;
     return Observer(builder: (_) {
-      return MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(gestureSettings: DeviceGestureSettings(touchSlop: 50)),
+      return Listener(
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
         child: PageView.builder(
           controller: _pageController,
           physics: userSetting.swipeChangeArtwork
               ? null
-              : NeverScrollableScrollPhysics(),
+              : const NeverScrollableScrollPhysics(),
           itemBuilder: (BuildContext context, int index) {
             if (index == _iStores.length && _lightingStore != null) {
               return PictureListNextPage(
@@ -84,43 +125,16 @@ class _PictureListPageState extends State<PictureListPage> {
             }
             final f = _iStores[index];
             String? tag = nowPosition == index ? widget.heroString : null;
-            return MediaQuery(
-              data: MediaQuery.of(context).copyWith(
-                  gestureSettings:
-                      DeviceGestureSettings(touchSlop: kTouchSlop)),
-              child: IllustLightingPage(
-                id: f.id,
-                heroString: tag,
-                store: f,
-                onHorizontalDragEnd: (details) {
-                  _onDrag(details);
-                },
-              ),
+            return IllustLightingPage(
+              id: f.id,
+              heroString: tag,
+              store: f,
             );
           },
           itemCount: _iStores.length + 1,
         ),
       );
     });
-  }
-
-  _onDrag(DragEndDetails details) {
-    final pixelsPerSecond = details.velocity.pixelsPerSecond;
-    if (pixelsPerSecond.dy.abs() > pixelsPerSecond.dx.abs()) return;
-    if (pixelsPerSecond.dx.abs() > screenWidth) {
-      int result = nowPosition;
-      if (pixelsPerSecond.dx < 0)
-        result++;
-      else
-        result--;
-      _pageController.animateToPage(result,
-          duration: Duration(milliseconds: 200), curve: Curves.easeInOut);
-      if (result >= _iStores.length) result = _iStores.length - 1;
-      if (result < 0) result = 0;
-      setState(() {
-        nowPosition = result;
-      });
-    }
   }
 }
 
@@ -135,6 +149,7 @@ class PictureListNextPage extends StatefulWidget {
 class _PictureListNextPageState extends State<PictureListNextPage> {
   late LightingStore _lightingStore;
   bool? loadResult;
+
   @override
   void initState() {
     _lightingStore = widget.lightingStore;
@@ -145,17 +160,9 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
   _maybeFetch(bool firstIn) async {
     if (_lightingStore.nextUrl == null) return;
     try {
-      if (!firstIn) {
-        setState(() {
-          loadResult = null;
-        });
-      }
+      if (!firstIn) setState(() => loadResult = null);
       final result = await _lightingStore.fetchNext();
-      if (mounted) {
-        setState(() {
-          loadResult = result;
-        });
-      }
+      if (mounted) setState(() => loadResult = result);
     } catch (e) {}
   }
 
@@ -175,18 +182,13 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
           child: Column(children: [
             Text("Load Failed"),
             TextButton(
-                onPressed: () {
-                  _maybeFetch(false);
-                },
-                child: Text("Retry"))
+                onPressed: () => _maybeFetch(false), child: Text("Retry"))
           ]),
         )),
       );
     }
     return Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
