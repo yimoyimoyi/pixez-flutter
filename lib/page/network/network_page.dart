@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:mobx/mobx.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
@@ -18,6 +19,7 @@ class NetworkPage extends StatefulWidget {
 class _NetworkPageState extends State<NetworkPage> {
   late bool _automaticallyImplyLeading;
   late TextEditingController _textEditingController;
+  late void Function() _disposer;
 
   @override
   void initState() {
@@ -25,11 +27,21 @@ class _NetworkPageState extends State<NetworkPage> {
       text: userSetting.pictureSource,
     );
     _automaticallyImplyLeading = widget.automaticallyImplyLeading ?? false;
+    // 监听图床变更同步控制器文字（非用户输入导致的变更）
+    _disposer = reaction(
+      (_) => userSetting.pictureSource,
+      (value) {
+        if (value != null && value != _textEditingController.text) {
+          _textEditingController.text = value;
+        }
+      },
+    );
     super.initState();
   }
 
   @override
   void dispose() {
+    _disposer();
     _textEditingController.dispose();
     super.dispose();
   }

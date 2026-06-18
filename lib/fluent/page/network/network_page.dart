@@ -1,5 +1,6 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:mobx/mobx.dart';
 import 'package:pixez/fluent/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
@@ -17,17 +18,27 @@ class NetworkPage extends StatefulWidget {
 
 class _NetworkPageState extends State<NetworkPage> {
   late TextEditingController _textEditingController;
+  late void Function() _disposer;
 
   @override
   void initState() {
     _textEditingController = TextEditingController(
       text: userSetting.pictureSource,
     );
+    _disposer = reaction(
+      (_) => userSetting.pictureSource,
+      (value) {
+        if (value != null && value != _textEditingController.text) {
+          _textEditingController.text = value;
+        }
+      },
+    );
     super.initState();
   }
 
   @override
   void dispose() {
+    _disposer();
     _textEditingController.dispose();
     super.dispose();
   }

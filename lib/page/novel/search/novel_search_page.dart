@@ -38,6 +38,7 @@ class NovelSearchPage extends StatefulWidget {
 
 class _NovelSearchPageState extends State<NovelSearchPage> {
   int _tagPage = 0;
+  bool _expanded = false;
   late TextEditingController _textEditingController;
   List<TrendTags> _tags = [];
 
@@ -190,7 +191,7 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                     .where((e) => e.type == 1)
                     .toList();
                 if (tags.isEmpty) return Container();
-                const pageSize = 50;
+                final pageSize = _expanded ? 50 : 24;
                 final maxPage = (tags.length - 1) ~/ pageSize;
                 if (_tagPage > maxPage) _tagPage = maxPage;
                 final start = _tagPage * pageSize;
@@ -210,34 +211,49 @@ class _NovelSearchPageState extends State<NovelSearchPage> {
                         runSpacing: 4.0,
                         spacing: 5.0,
                       ),
-                      if (tags.length > pageSize)
+                      if (tags.length > pageSize || (!_expanded && tags.length > 24))
                         Padding(
                           padding: EdgeInsets.only(top: 8),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_tagPage > 0)
-                                ActionChip(
-                                  label: Text('上一页'),
-                                  padding: EdgeInsets.symmetric(horizontal: 4),
-                                  onPressed: () =>
-                                      setState(() => _tagPage--),
-                                ),
-                              Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 8),
-                                child: Text(
-                                  '${_tagPage + 1}/${maxPage + 1}',
-                                  style: TextStyle(fontSize: 12),
-                                ),
-                              ),
-                              if (_tagPage < maxPage)
-                                ActionChip(
-                                  label: Text('下一页'),
-                                  padding: EdgeInsets.symmetric(horizontal: 4),
-                                  onPressed: () =>
-                                      setState(() => _tagPage++),
-                                ),
-                            ],
+                            children: _expanded
+                                ? [
+                                    if (_tagPage > 0)
+                                      ActionChip(
+                                        label: Text('上一页'),
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 4),
+                                        onPressed: () =>
+                                            setState(() => _tagPage--),
+                                      ),
+                                    Padding(
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      child: Text(
+                                        '${_tagPage + 1}/${maxPage + 1}',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                    if (_tagPage < maxPage)
+                                      ActionChip(
+                                        label: Text('下一页'),
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 4),
+                                        onPressed: () =>
+                                            setState(() => _tagPage++),
+                                      ),
+                                  ]
+                                : [
+                                    ActionChip(
+                                      label: Text(
+                                          '展开 (共${tags.length}条)'),
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: 4),
+                                      onPressed: () =>
+                                          setState(
+                                              () => _expanded = true),
+                                    ),
+                                  ],
                           ),
                         ),
                     ],

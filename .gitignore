@@ -122,3 +122,5 @@ msic
 /lib/src/generated/
 # Local build script
 build_release.ps1
+build_release.bat
+build_release/
