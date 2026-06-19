@@ -14,6 +14,8 @@
  *
  */
 
+import 'dart:async';
+
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/exts.dart';
@@ -36,6 +38,9 @@ class _NovelRecomPageState extends State<NovelRecomPage>
     with AutomaticKeepAliveClientMixin {
   late NovelLightingStore _store;
   late EasyRefreshController _easyRefreshController;
+  final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -44,11 +49,30 @@ class _NovelRecomPageState extends State<NovelRecomPage>
     _store = NovelLightingStore(
         () => apiClient.getNovelRecommended(), _easyRefreshController);
     super.initState();
+    _scrollController.addListener(_onScroll);
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final visible = _scrollController.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final visible = _scrollController.position.pixels > 500;
+    if (_backToTopNotifier.value != visible) {
+      _backToTopNotifier.value = visible;
+    }
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _easyRefreshController.dispose();
+    _scrollController.dispose();
+    _backToTopNotifier.dispose();
     super.dispose();
   }
 
@@ -76,17 +100,20 @@ class _NovelRecomPageState extends State<NovelRecomPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return EasyRefresh.builder(
-      header: PixezDefault.header(context),
-      onRefresh: () => _store.fetch(),
-      onLoad: () => _store.next(),
-      controller: _easyRefreshController,
-      callRefreshOverOffset: 10,
-      refreshOnStart: true,
-      childBuilder: (context, physics) => Observer(builder: (context) {
-        return CustomScrollView(
-          physics: physics,
-          slivers: [
+    return Stack(
+      children: [
+        EasyRefresh.builder(
+          header: PixezDefault.header(context),
+          onRefresh: () => _store.fetch(),
+          onLoad: () => _store.next(),
+          controller: _easyRefreshController,
+          callRefreshOverOffset: 10,
+          refreshOnStart: true,
+          childBuilder: (context, physics) => Observer(builder: (context) {
+            return CustomScrollView(
+              controller: _scrollController,
+              physics: physics,
+              slivers: [
             SliverAppBar(
               elevation: 0.0,
               titleSpacing: 0.0,
@@ -98,6 +125,27 @@ class _NovelRecomPageState extends State<NovelRecomPage>
           ],
         );
       }),
+    ),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80,
+              child: FloatingActionButton.small(
+                heroTag: 'bt_novel_recom',
+                onPressed: () {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 

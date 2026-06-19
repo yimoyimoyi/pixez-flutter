@@ -1,3 +1,5 @@
+import 'package:pixez/er/prefer.dart';
+
 enum IllustQuality { medium, large, original }
 
 extension IllustQualityExtension on IllustQuality {
@@ -51,11 +53,15 @@ class IllustCacher {
 }
 
 class MmapCache {
+  static const _prefix = 'mmap_';
+
   static Future<void> init() async {}
 
-  static void save(String key, String value) {}
+  static void save(String key, String value) {
+    Prefer.setString('$_prefix$key', value);
+  }
 
   static String? read(String key) {
-    return null;
+    return Prefer.getString('$_prefix$key');
   }
 }

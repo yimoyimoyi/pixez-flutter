@@ -14,6 +14,7 @@
  *
  */
 
+import 'dart:async';
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
@@ -42,6 +43,10 @@ class _NovelLightingListState extends State<NovelLightingList> {
   late EasyRefreshController _easyRefreshController;
   late NovelLightingStore _store;
   late bool _isNested;
+  final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -49,8 +54,25 @@ class _NovelLightingListState extends State<NovelLightingList> {
     _easyRefreshController = EasyRefreshController(
         controlFinishLoad: true, controlFinishRefresh: true);
     _store = NovelLightingStore(widget.futureGet, _easyRefreshController);
+    _scrollController.addListener(_onScrollUpdate);
+    // 回顶按钮：Timer 轮询
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final visible = _scrollController.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
     super.initState();
     if (_isNested) _store.fetch();
+  }
+
+  void _onScrollUpdate() {
+    if (!_scrollController.hasClients) return;
+    final visible = _scrollController.position.pixels > 500;
+    if (_backToTopNotifier.value != visible) {
+      _backToTopNotifier.value = visible;
+    }
   }
 
   @override
@@ -64,7 +86,10 @@ class _NovelLightingListState extends State<NovelLightingList> {
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _easyRefreshController.dispose();
+    _scrollController.dispose();
+    _backToTopNotifier.dispose();
     super.dispose();
   }
 
@@ -100,6 +125,7 @@ class _NovelLightingListState extends State<NovelLightingList> {
   ListView _buildListBody() {
     _store.novels.removeWhere((element) => element.novel?.hateByUser() == true);
     return ListView.builder(
+      controller: _scrollController,
       padding: EdgeInsets.all(0),
       itemBuilder: (context, index) {
         Novel novel = _store.novels[index].novel!;
@@ -247,15 +273,48 @@ class _NovelLightingListState extends State<NovelLightingList> {
 
   @override
   Widget build(BuildContext context) {
-    return EasyRefresh(
-      onLoad: () => _store.next(),
-      onRefresh: () => _store.fetch(),
-      refreshOnStart: _isNested ? false : true,
-      controller: _easyRefreshController,
-      header: PixezDefault.header(context),
-      child: Observer(builder: (context) {
-        return _buildBody(context);
-      }),
+    return Stack(
+      children: [
+        EasyRefresh(
+          onLoad: () => _store.next(),
+          onRefresh: () => _store.fetch(),
+          refreshOnStart: _isNested ? false : true,
+          controller: _easyRefreshController,
+          header: PixezDefault.header(context),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (_isNested) return true;
+              final visible = notification.metrics.pixels > 500;
+              if (_backToTopNotifier.value != visible) {
+                _backToTopNotifier.value = visible;
+              }
+              return false;
+            },
+            child: Observer(builder: (context) {
+              return _buildBody(context);
+            }),
+          ),
+        ),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80, // 避开底部导航栏
+              child: FloatingActionButton.small(
+                heroTag: 'novelBackToTop',
+                onPressed: () {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 }

@@ -127,6 +127,8 @@ class Hoster {
   }
 
   static Future<void> dnsQuery(String name) async {
+    // DoH 已禁用：跳过查询，直接使用硬编码 IP 池
+    if (userSetting.disableDoh) return;
     try {
       await createDioClient();
       // 遍历 DoH 服务器列表查询 DNS

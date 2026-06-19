@@ -14,6 +14,8 @@
  *
  */
 
+import 'dart:async';
+
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
@@ -40,6 +42,8 @@ class _PainterListState extends State<PainterList> {
   late EasyRefreshController _easyRefreshController;
   late PainterListStore _painterListStore;
   late ScrollController _scrollController;
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -50,6 +54,22 @@ class _PainterListState extends State<PainterList> {
         PainterListStore(_easyRefreshController, widget.futureGet);
     super.initState();
     _painterListStore.fetch();
+    _scrollController.addListener(_onScroll);
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final visible = _scrollController.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final visible = _scrollController.position.pixels > 500;
+    if (_backToTopNotifier.value != visible) {
+      _backToTopNotifier.value = visible;
+    }
   }
 
   @override
@@ -66,33 +86,58 @@ class _PainterListState extends State<PainterList> {
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _scrollController.dispose();
     _easyRefreshController.dispose();
+    _backToTopNotifier.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Observer(builder: (_) {
-      return EasyRefresh(
-        controller: _easyRefreshController,
-        header: PixezDefault.header(context),
-        onLoad: () => _painterListStore.next(),
-        onRefresh: () => _painterListStore.fetch(),
-        child: _painterListStore.users.isNotEmpty
-            ? CustomScrollView(
-                controller: _scrollController,
-                slivers: [
-                  if (widget.header != null)
-                    SliverToBoxAdapter(
-                      child: widget.header!,
-                    ),
-                  _buildList(),
-                ],
-              )
-            : Container(),
-      );
-    });
+    return Stack(
+      children: [
+        Observer(builder: (_) {
+          return EasyRefresh(
+            controller: _easyRefreshController,
+            header: PixezDefault.header(context),
+            onLoad: () => _painterListStore.next(),
+            onRefresh: () => _painterListStore.fetch(),
+            child: _painterListStore.users.isNotEmpty
+                ? CustomScrollView(
+                    controller: _scrollController,
+                    slivers: [
+                      if (widget.header != null)
+                        SliverToBoxAdapter(
+                          child: widget.header!,
+                        ),
+                      _buildList(),
+                    ],
+                  )
+                : Container(),
+          );
+        }),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80,
+              child: FloatingActionButton.small(
+                heroTag: 'bt_painter_list',
+                onPressed: () {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 
   Widget _buildList() {

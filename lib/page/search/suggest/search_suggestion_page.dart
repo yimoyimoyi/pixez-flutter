@@ -20,6 +20,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
+import 'package:pixez/main.dart';
+import 'package:pixez/models/ban_tag.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
 import 'package:pixez/page/search/result_page.dart';
@@ -164,10 +166,15 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
                   ),
                   if (_suggestionStore.autoWords != null &&
                       _suggestionStore.autoWords!.tags.isNotEmpty)
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate((context, index) {
-                        final tags = _suggestionStore.autoWords!.tags;
-                        return GestureDetector(
+                    Observer(builder: (_) {
+                      final tags = _suggestionStore.autoWords!.tags
+                          .where((t) => !muteStore.banTags
+                              .any((b) => b.isRegexMatch(t.name)))
+                          .toList();
+                      return SliverList(
+                        delegate:
+                            SliverChildBuilderDelegate((context, index) {
+                          return GestureDetector(
                           onLongPress: () {
                             Clipboard.setData(
                                 ClipboardData(text: tags[index].name));
@@ -199,8 +206,8 @@ class _SearchSuggestionPageState extends State<SearchSuggestionPage> {
                             subtitle: Text(tags[index].translated_name ?? ""),
                           ),
                         );
-                      }, childCount: _suggestionStore.autoWords!.tags.length),
-                    ),
+                      }, childCount: tags.length),
+                      );}),
                 ],
               ),
             ),

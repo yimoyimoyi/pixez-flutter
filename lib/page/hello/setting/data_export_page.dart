@@ -4,6 +4,8 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/glance_illust_persist.dart';
@@ -157,53 +159,10 @@ class DataExportPage extends HookConsumerWidget {
             }
           },
         ),
-        Divider(),
-        ListTile(
-          title: Text(I18n.of(context).clear_all_cache),
-          onTap: () async {
-            try {
-              await _showClearCacheDialog(context);
-            } catch (e) {}
-          },
-        ),
+        const Divider(),
+        _CacheSection(),
       ],
     );
-  }
-
-  Future _showClearCacheDialog(BuildContext context) async {
-    final result = await showDialog(
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(I18n.of(context).clear_all_cache),
-          actions: <Widget>[
-            TextButton(
-              child: Text(I18n.of(context).cancel),
-              onPressed: () {
-                Navigator.of(context).pop("CANCEL");
-              },
-            ),
-            TextButton(
-              child: Text(I18n.of(context).ok),
-              onPressed: () {
-                Navigator.of(context).pop("OK");
-              },
-            ),
-          ],
-        );
-      },
-      context: context,
-    );
-    switch (result) {
-      case "OK":
-        {
-          try {
-            Directory tempDir = await getTemporaryDirectory();
-            tempDir.deleteSync(recursive: true);
-            cleanGlanceData();
-          } catch (e) {}
-        }
-        break;
-    }
   }
 
   void cleanGlanceData() async {
@@ -212,5 +171,204 @@ class DataExportPage extends HookConsumerWidget {
     await glanceIllustPersistProvider.open();
     await glanceIllustPersistProvider.deleteAll();
     await glanceIllustPersistProvider.close();
+  }
+}
+
+class _CacheSection extends StatefulWidget {
+  @override
+  State<_CacheSection> createState() => _CacheSectionState();
+}
+
+class _CacheSectionState extends State<_CacheSection> {
+  String _imageCacheSize = '计算中…';
+  String _novelCacheSize = '计算中…';
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshSizes();
+  }
+
+  Future<void> _refreshSizes() async {
+    final tmpDir = await getTemporaryDirectory();
+    final dioCache = Directory('${tmpDir.path}/dioCache');
+    int imageBytes = 0;
+    if (await dioCache.exists()) {
+      await for (final f in dioCache.list(recursive: true)) {
+        if (f is File) imageBytes += await f.length();
+      }
+    }
+    final appDir = await getApplicationSupportDirectory();
+    final novelCache = Directory('${appDir.path}/novel_text_cache');
+    int novelBytes = 0;
+    if (await novelCache.exists()) {
+      await for (final f in novelCache.list(recursive: true)) {
+        if (f is File) novelBytes += await f.length();
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _imageCacheSize = _fmt(imageBytes);
+        _novelCacheSize = _fmt(novelBytes);
+      });
+    }
+  }
+
+  String _fmt(int b) {
+    if (b < 1024) return '$b B';
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
+    return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _clearImage() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(I18n.of(context).clear_all_cache),
+        content: Text('清除所有图片缓存（$_imageCacheSize）？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(I18n.of(context).cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(I18n.of(context).ok)),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await pixivCacheManager?.emptyCache();
+      final tmpDir = await getTemporaryDirectory();
+      final dioCache = Directory('${tmpDir.path}/dioCache');
+      if (await dioCache.exists()) {
+        await dioCache.delete(recursive: true);
+        await dioCache.create();
+      }
+      await _refreshSizes();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('图片缓存已清除')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('清除失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _clearNovel() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除小说缓存'),
+        content: Text('清除所有小说正文缓存（$_novelCacheSize）？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(I18n.of(context).cancel)),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(I18n.of(context).ok)),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final novelCache = Directory('${appDir.path}/novel_text_cache');
+      if (await novelCache.exists()) {
+        await novelCache.delete(recursive: true);
+      }
+      await _refreshSizes();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('小说缓存已清除')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('清除失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _saveImageCache() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.storage.request();
+      if (!status.isGranted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('需要存储权限才能保存缓存')),
+        );
+        return;
+      }
+    }
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final srcDir = Directory('${tmpDir.path}/dioCache');
+      if (!await srcDir.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('暂无缓存可保存')));
+        }
+        return;
+      }
+      final dlDir = await getExternalStorageDirectory();
+      if (dlDir == null) throw Exception('无法访问存储目录');
+      final destDir = Directory('${dlDir.path}/pixez_cache');
+      if (await destDir.exists()) await destDir.delete(recursive: true);
+      await destDir.create(recursive: true);
+      final files = await srcDir.list(recursive: true).toList();
+      int copied = 0;
+      for (final entity in files) {
+        if (entity is File) {
+          final relPath = entity.path.substring(srcDir.path.length + 1);
+          final destFile = File('${destDir.path}/$relPath');
+          await destFile.parent.create(recursive: true);
+          await entity.copy(destFile.path);
+          copied++;
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已保存 $copied 个文件到 ${destDir.path}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存失败: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.image),
+          title: const Text('图片缓存'),
+          subtitle: Text(_imageCacheSize),
+          trailing: const Icon(Icons.delete_outline),
+          onTap: _clearImage,
+        ),
+        ListTile(
+          leading: const Icon(Icons.book),
+          title: const Text('小说正文缓存'),
+          subtitle: Text(_novelCacheSize),
+          trailing: const Icon(Icons.delete_outline),
+          onTap: _clearNovel,
+        ),
+        ListTile(
+          leading: const Icon(Icons.save_alt),
+          title: const Text('保存图片缓存'),
+          subtitle: const Text('复制到下载目录，避免系统清理'),
+          onTap: _saveImageCache,
+        ),
+      ],
+    );
   }
 }

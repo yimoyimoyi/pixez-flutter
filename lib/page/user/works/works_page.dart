@@ -14,6 +14,7 @@
  *
  */
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:easy_refresh/easy_refresh.dart';
@@ -55,6 +56,8 @@ class _WorksPageState extends State<WorksPage>
   late LightingStore _store;
   late EasyRefreshController _easyRefreshController;
   late String _workType;
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -65,11 +68,24 @@ class _WorksPageState extends State<WorksPage>
     super.initState();
     _store.fetch();
     _workType = widget.workType;
+    // 不传自定义 controller 给 CustomScrollView，避免破坏 NestedScrollView 协调
+    // 改用 PrimaryScrollController 读取滚动位置
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted) return;
+      final ctrl = PrimaryScrollController.maybeOf(context);
+      if (ctrl == null || !ctrl.hasClients) return;
+      final visible = ctrl.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _easyRefreshController.dispose();
+    _backToTopNotifier.dispose();
     _store.dispose();
     super.dispose();
   }
@@ -79,9 +95,33 @@ class _WorksPageState extends State<WorksPage>
 
   @override
   Widget build(BuildContext context) {
-    return Observer(builder: (_) {
-      return _buildContent(context);
-    });
+    return Stack(
+      children: [
+        Observer(builder: (_) {
+          return _buildContent(context);
+        }),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80,
+              child: FloatingActionButton.small(
+                heroTag: 'bt_works_${widget.id}',
+                onPressed: () {
+                  final ctrl = PrimaryScrollController.maybeOf(context);
+                  if (ctrl != null && ctrl.hasClients) {
+                    ctrl.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 
   Widget _buildContent(context) {

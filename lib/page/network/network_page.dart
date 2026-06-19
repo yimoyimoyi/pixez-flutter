@@ -82,6 +82,17 @@ class _NetworkPageState extends State<NetworkPage> {
                 padding: const EdgeInsets.all(8.0),
                 child: _buildNetworkModeSetting(context),
               ),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Card(
+                  child: SwitchListTile(
+                    value: userSetting.disableDoh,
+                    title: const Text("禁用 DoH"),
+                    subtitle: const Text("使用硬编码 IP，局域网代理环境下避免 DNS 冲突"),
+                    onChanged: (v) => userSetting.setDisableDoh(v),
+                  ),
+                ),
+              ),
               Visibility(
                 visible: userSetting.networkMode.allowsImageSource,
                 child: Padding(

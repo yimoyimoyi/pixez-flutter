@@ -27,7 +27,7 @@ import 'package:pixez/fluent/page/soup/soup_page.dart';
 
 class SpotlightCard extends StatelessWidget {
   final SpotlightArticle spotlight;
-  static const platform = const MethodChannel('samples.flutter.dev/battery');
+  static const platform = MethodChannel('samples.flutter.dev/battery');
 
   const SpotlightCard({Key? key, required this.spotlight}) : super(key: key);
 
@@ -77,6 +77,35 @@ class SpotlightCard extends StatelessWidget {
           title: Text("${I18n.of(context).spotlight}: ${spotlight.id}"),
         );
       },
+      onLongPress: () {
+        Leader.push(context,
+          _FluentCoverPreview(url: spotlight.thumbnail, title: spotlight.title),
+          title: Text(spotlight.title),
+        );
+      },
+    );
+  }
+}
+
+class _FluentCoverPreview extends StatelessWidget {
+  final String url;
+  final String title;
+  const _FluentCoverPreview({required this.url, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaffoldPage(
+      header: PageHeader(title: Text(title)),
+      content: Center(
+        child: InteractiveViewer(
+          child: CachedNetworkImage(
+            imageUrl: url,
+            httpHeaders: Hoster.header(url: url),
+            cacheManager: pixivCacheManager,
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
     );
   }
 }

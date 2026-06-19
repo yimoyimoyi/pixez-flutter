@@ -105,7 +105,7 @@ class _NewIllustPageState extends State<NewIllustPage> {
               ],
             ),
           ),
-        )
+        ),
       ],
     );
   }

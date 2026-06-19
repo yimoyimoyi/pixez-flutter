@@ -14,6 +14,7 @@
  *
  */
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:easy_refresh/easy_refresh.dart';
@@ -109,48 +110,100 @@ class _LightingListState extends State<LightingList> {
     );
     _store.easyRefreshController = _refreshController;
 
-    // 添加滚动监听，更新图片加载协调器的可视范围
-    if (widget.scrollController == null && !_isNested) {
-      _scrollController.addListener(_onScrollUpdate);
-    }
+    // 图片加载协调器：监听滚动位置
+    _scrollController.addListener(_onScrollUpdate);
+    // 回顶按钮：Timer 轮询（嵌套页面用 PrimaryScrollController）
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted) return;
+      final ctrl = _isNested
+          ? PrimaryScrollController.maybeOf(context)
+          : (_scrollController.hasClients ? _scrollController : null);
+      if (ctrl == null || !ctrl.hasClients) return;
+      final visible = ctrl.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
 
     super.initState();
     _store.fetch();
   }
 
+  Timer? _pollTimer;
+
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+
   void _onScrollUpdate() {
     if (!_scrollController.hasClients) return;
     final metrics = _scrollController.position;
-    // 估算每个 item 的高度（考虑瀑布流中 item 高度不一致，取约 280px 平均值）
+    final pixels = metrics.pixels;
+
+    // 回顶按钮可见性（双保险：Controller + NotificationListener）
+    final visible = pixels > 500;
+    if (_backToTopNotifier.value != visible) {
+      _backToTopNotifier.value = visible;
+    }
+
+    // 图片加载协调器可视范围
     const approxItemHeight = 280.0;
-    final start = (metrics.pixels / approxItemHeight)
+    final start = (pixels / approxItemHeight)
         .floor()
         .clamp(0, _store.iStores.length);
     final end =
-        ((metrics.pixels + metrics.viewportDimension) / approxItemHeight)
+        ((pixels + metrics.viewportDimension) / approxItemHeight)
             .ceil()
             .clamp(0, _store.iStores.length);
     ImageLoadCoordinator.instance.updateVisibleRange(start, end);
   }
 
+  /// 滚动通知处理：在 EasyRefresh.childBuilder 内部捕获
+  bool _onScrollNotify(ScrollNotification notification) {
+    final visible = notification.metrics.pixels > 500;
+    if (_backToTopNotifier.value != visible) {
+      _backToTopNotifier.value = visible;
+    }
+    return false; // 不消费，让 EasyRefresh 也能收到
+  }
+
   @override
   void dispose() {
+    _pollTimer?.cancel();
     if (widget.scrollController == null) {
       _scrollController.dispose();
     }
+    _backToTopNotifier.dispose();
     _store.dispose();
     _refreshController.dispose();
     super.dispose();
   }
 
-  bool backToTopVisible = false;
-
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Observer(builder: (_) {
-        return Container(child: _buildContent(context));
-      }),
+    return Stack(
+      children: [
+        Observer(builder: (_) {
+          return _buildContent(context);
+        }),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80, // 避开底部导航栏 (extendBody: true)
+              child: FloatingActionButton.small(
+                heroTag: 'bt_${_store.hashCode}',
+                onPressed: () {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -164,41 +217,32 @@ class _LightingListState extends State<LightingList> {
       }
       return false;
     });
-    return NotificationListener<ScrollNotification>(
-        onNotification: (ScrollNotification notification) {
-          if (widget.isNested == true) {
-            return true;
-          }
-          ScrollMetrics metrics = notification.metrics;
-          if (backToTopVisible == metrics.atEdge && mounted) {
-            setState(() {
-              backToTopVisible = !backToTopVisible;
-            });
-          }
-          return true;
-        },
-        child: EasyRefresh.builder(
-          controller: _refreshController,
-          header: PixezDefault.header(context),
-          footer: PixezDefault.footer(context),
-          scrollController: _scrollController,
-          onRefresh: () {
-            _store.fetch(force: true);
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      header: PixezDefault.header(context),
+      footer: PixezDefault.footer(context),
+      onRefresh: () {
+        _store.fetch(force: true);
+      },
+      onLoad: () {
+        _store.fetchNext();
+      },
+      childBuilder: (context, physics) =>
+          NotificationListener<ScrollNotification>(
+        onNotification: _onScrollNotify,
+        child: WaterfallFlow.builder(
+          physics: physics,
+          controller:
+              widget.isNested ?? false ? null : _scrollController,
+          padding: const EdgeInsets.all(5.0),
+          itemCount: _store.iStores.length,
+          itemBuilder: (context, index) {
+            return _buildItem(index);
           },
-          onLoad: () {
-            _store.fetchNext();
-          },
-          childBuilder: (context, physics) => WaterfallFlow.builder(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            padding: EdgeInsets.all(5.0),
-            itemCount: _store.iStores.length,
-            itemBuilder: (context, index) {
-              return _buildItem(index);
-            },
-            gridDelegate: _buildGridDelegate(),
-          ),
-        ));
+          gridDelegate: _buildGridDelegate(),
+        ),
+      ),
+    );
   }
 
   bool needToBan(Illusts illust) {
@@ -261,46 +305,38 @@ class _LightingListState extends State<LightingList> {
   }
 
   Widget _buildWithHeader(BuildContext context) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (ScrollNotification notification) {
-        ScrollMetrics metrics = notification.metrics;
-        if (backToTopVisible == metrics.atEdge && mounted) {
-          setState(() {
-            backToTopVisible = !backToTopVisible;
-          });
-        }
-        return true;
+    return EasyRefresh.builder(
+      controller: _refreshController,
+      header: PixezDefault.header(context),
+      footer:
+          PixezDefault.footer(context, position: IndicatorPosition.locator),
+      onRefresh: () {
+        _store.fetch(force: true);
       },
-      child: EasyRefresh.builder(
-        controller: _refreshController,
-        scrollController: _scrollController,
-        header: PixezDefault.header(context),
-        footer:
-            PixezDefault.footer(context, position: IndicatorPosition.locator),
-        onRefresh: () {
-          _store.fetch(force: true);
-        },
-        onLoad: () {
-          _store.fetchNext();
-        },
-        childBuilder: ((context, physics) {
-          return CustomScrollView(
-            physics: physics,
-            controller: widget.isNested ?? false ? null : _scrollController,
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(child: widget.header),
-              ),
-              SliverWaterfallFlow(
-                gridDelegate: _buildGridDelegate(),
-                delegate: _buildSliverChildBuilderDelegate(context),
-              ),
-              const FooterLocator.sliver(),
-            ],
-          );
-        }),
-      ),
-    );
+      onLoad: () {
+        _store.fetchNext();
+      },
+      childBuilder: ((context, physics) {
+              return NotificationListener<ScrollNotification>(
+                onNotification: _onScrollNotify,
+                child: CustomScrollView(
+                  physics: physics,
+                  controller:
+                      widget.isNested ?? false ? null : _scrollController,
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Container(child: widget.header),
+                    ),
+                    SliverWaterfallFlow(
+                      gridDelegate: _buildGridDelegate(),
+                      delegate: _buildSliverChildBuilderDelegate(context),
+                    ),
+                    const FooterLocator.sliver(),
+                  ],
+                ),
+              );
+            }),
+        );
   }
 
   SliverChildBuilderDelegate _buildSliverChildBuilderDelegate(

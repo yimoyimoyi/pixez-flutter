@@ -176,17 +176,19 @@ class _NewWidgetState extends State<NewWidget> {
   );
   late BookMarkTagStore _bookMarkTagStore;
   late String restrict;
+  String? _errorMessage;
 
   @override
   void initState() {
+    final userId = int.tryParse(accountStore.now?.userId ?? '');
     _bookMarkTagStore = BookMarkTagStore(
-      int.parse(accountStore.now!.userId),
+      userId ?? 0,
       _easyRefreshController,
     );
     restrict = widget.restrict;
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((duration) {
-      _bookMarkTagStore.fetch(restrict);
+    _bookMarkTagStore.fetch(restrict).catchError((e) {
+      if (mounted) setState(() => _errorMessage = e.toString());
     });
   }
 
@@ -200,11 +202,38 @@ class _NewWidgetState extends State<NewWidget> {
   Widget build(BuildContext context) {
     return Observer(
       builder: (_) {
+        if (_errorMessage != null) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_errorMessage!, style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() => _errorMessage = null);
+                    _bookMarkTagStore.fetch(restrict).catchError((e) {
+                      if (mounted) setState(() => _errorMessage = e.toString());
+                    });
+                  },
+                  child: Text(I18n.of(context).retry),
+                ),
+              ],
+            ),
+          );
+        }
         return EasyRefresh(
           controller: _easyRefreshController,
           refreshOnStart: true,
           header: PixezDefault.header(context),
           footer: PixezDefault.footer(context),
+          onRefresh: () async {
+            _errorMessage = null;
+            await _bookMarkTagStore.fetch(restrict);
+          },
+          onLoad: () async {
+            await _bookMarkTagStore.next();
+          },
           child: ListView(
             children: [
               ListTile(
@@ -222,6 +251,17 @@ class _NewWidgetState extends State<NewWidget> {
                   }); //日语
                 },
               ),
+              if (_bookMarkTagStore.bookmarkTags.isEmpty &&
+                  _bookMarkTagStore.nextUrl == null)
+                Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Center(
+                    child: Text(
+                      '暂无收藏标签',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                ),
               for (var bookmarkTag in _bookMarkTagStore.bookmarkTags)
                 ListTile(
                   title: Text(bookmarkTag.name),
@@ -235,12 +275,6 @@ class _NewWidgetState extends State<NewWidget> {
                 ),
             ],
           ),
-          onRefresh: () async {
-            await _bookMarkTagStore.fetch(restrict);
-          },
-          onLoad: () async {
-            await _bookMarkTagStore.next();
-          },
         );
       },
     );

@@ -28,6 +28,7 @@ import 'package:pixez/er/toaster.dart';
 import 'package:pixez/exts.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/js_eval_plugin.dart';
+import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/illust.dart';
 import 'package:pixez/models/task_persist.dart';
@@ -291,6 +292,38 @@ abstract class _SaveStoreBase with Store {
       await fetcher.taskPersistProvider.insert(taskPersist);
       fetcher.save(url, illusts, fileName);
     } catch (e) {}
+  }
+
+  /// 直接通过 URL 保存图片（无需 Illusts 对象）
+  Future<void> saveImageByUrl(String url, String title) async {
+    try {
+      final ext = url.contains('.png') ? '.png' : '.jpg';
+      final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final fileName = '${safeTitle}_cover$ext';
+      final taskPersist = TaskPersist(
+        illustId: 0,
+        userId: 0,
+        userName: '',
+        title: title,
+        fileName: fileName,
+        status: 0,
+        medium: url,
+        url: url,
+      );
+      await fetcher.taskPersistProvider.insert(taskPersist);
+      // 通过 CacheManager 下载（复用 URL 重写拦截器）
+      final file = await pixivCacheManager?.getSingleFile(url);
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        DocumentPlugin.save(
+          Uint8List.fromList(bytes),
+          fileName,
+          clearOld: userSetting.isClearOldFormatFile,
+        );
+      }
+    } catch (e) {
+      // silent
+    }
   }
 
   _saveInternal(

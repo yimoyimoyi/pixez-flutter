@@ -117,13 +117,25 @@ class _SoupPageState extends State<SoupPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (widget.spotlight != null) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: PixivImage(
-                    widget.spotlight!.thumbnail,
-                    width: 200,
-                    height: 120,
-                    fit: BoxFit.cover,
+                GestureDetector(
+                  onLongPress: () {
+                    saveStore.saveImageByUrl(
+                      widget.spotlight!.thumbnail,
+                      widget.spotlight!.pureTitle,
+                    );
+                    displayInfoBar(context, builder: (_, __) => const InfoBar(
+                      title: Text('已加入下载队列'),
+                      severity: InfoBarSeverity.success,
+                    ));
+                  },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: PixivImage(
+                      widget.spotlight!.thumbnail,
+                      width: 200,
+                      height: 120,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
                 SizedBox(height: 12),

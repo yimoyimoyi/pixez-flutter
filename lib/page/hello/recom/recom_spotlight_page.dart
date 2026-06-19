@@ -53,14 +53,6 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
   late ScrollController _scrollController;
 
   @override
-  void dispose() {
-    subscription.cancel();
-    _scrollController.dispose();
-    _easyRefreshController.dispose();
-    super.dispose();
-  }
-
-  @override
   void initState() {
     _scrollController = ScrollController();
     _easyRefreshController = EasyRefreshController(
@@ -91,23 +83,9 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
     return buildEasyRefresh(context);
   }
 
-  bool backToTopVisible = false;
-
   Widget buildEasyRefresh(BuildContext context) {
     return Stack(
       children: [
-        NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) => [
-            SliverAppBar(
-              elevation: 0.0,
-              titleSpacing: 0.0,
-              automaticallyImplyLeading: false,
-              // backgroundColor: Theme.of(context).canvasColor,
-              title: Text(""),
-            )
-          ],
-          body: ListView(),
-        ),
         EasyRefresh.builder(
           controller: _easyRefreshController,
           callLoadOverOffset: Platform.isIOS ? 2 : 5,
@@ -124,6 +102,25 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
             builder: (context) => _buildWaterFall(context, physics),
           ),
         ),
+        ValueListenableBuilder<bool>(
+          valueListenable: _backToTopNotifier,
+          builder: (_, visible, __) {
+            if (!visible) return const SizedBox.shrink();
+            return Positioned(
+              right: 16,
+              bottom: 80,
+              child: FloatingActionButton.small(
+                heroTag: 'backToTop_recom',
+                onPressed: () {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0);
+                  }
+                },
+                child: const Icon(Icons.keyboard_arrow_up),
+              ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -133,13 +130,11 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
         .removeWhere((element) => element.illusts!.hateByUser());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
-        ScrollMetrics metrics = notification.metrics;
-        if (backToTopVisible == metrics.atEdge && mounted) {
-          setState(() {
-            backToTopVisible = !backToTopVisible;
-          });
+        final visible = notification.metrics.pixels > 500;
+        if (_backToTopNotifier.value != visible) {
+          _backToTopNotifier.value = visible;
         }
-        return true;
+        return false;
       },
       child: CustomScrollView(
         controller: _scrollController,
@@ -389,4 +384,15 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
 
   @override
   bool get wantKeepAlive => true;
+
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+
+  @override
+  void dispose() {
+    _backToTopNotifier.dispose();
+    subscription.cancel();
+    _scrollController.dispose();
+    _easyRefreshController.dispose();
+    super.dispose();
+  }
 }

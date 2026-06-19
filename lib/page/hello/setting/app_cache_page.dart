@@ -4,6 +4,7 @@ import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class AppCachePage extends StatefulWidget {
   @override
@@ -87,6 +88,62 @@ class _AppCachePageState extends State<AppCachePage> {
     }
   }
 
+  Future<void> _saveImageCache() async {
+    // 请求存储权限
+    if (Platform.isAndroid) {
+      final status = await Permission.storage.request();
+      if (!status.isGranted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('需要存储权限才能保存缓存')),
+        );
+        return;
+      }
+    }
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final srcDir = Directory('${tmpDir.path}/dioCache');
+      if (!await srcDir.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('暂无缓存可保存')),
+          );
+        }
+        return;
+      }
+      // 复制到下载目录
+      final dlDir = await getExternalStorageDirectory();
+      if (dlDir == null) throw Exception('无法访问存储目录');
+      final destDir = Directory('${dlDir.path}/pixez_cache');
+      if (await destDir.exists()) {
+        await destDir.delete(recursive: true);
+      }
+      await destDir.create(recursive: true);
+
+      final files = await srcDir.list(recursive: true).toList();
+      int copied = 0;
+      for (final entity in files) {
+        if (entity is File) {
+          final relPath = entity.path.substring(srcDir.path.length + 1);
+          final destFile = File('${destDir.path}/$relPath');
+          await destFile.parent.create(recursive: true);
+          await entity.copy(destFile.path);
+          copied++;
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已保存 $copied 个文件到 ${destDir.path}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _clearNovelCache() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -138,6 +195,14 @@ class _AppCachePageState extends State<AppCachePage> {
             subtitle: Text(_novelCacheSize),
             trailing: const Icon(Icons.delete_outline),
             onTap: _clearNovelCache,
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.save_alt),
+            title: const Text('保存图片缓存'),
+            subtitle: const Text('将缓存复制到下载目录，避免系统清理'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _saveImageCache,
           ),
           const Divider(),
           // 缓存数量限制

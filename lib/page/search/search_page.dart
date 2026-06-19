@@ -22,6 +22,7 @@ import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/ban_tag.dart';
 import 'package:pixez/models/tags.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/saucenao/sauce_store.dart';
@@ -358,24 +359,29 @@ class _SearchPageState extends State<SearchPage>
             ),
           ),
           if (_trendTagsStore.trendTags.isNotEmpty)
-            SliverPadding(
-              padding: EdgeInsets.all(8.0),
-              sliver: SliverGrid(
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final tags = _trendTagsStore.trendTags;
+            Observer(builder: (_) {
+              final filtered = _trendTagsStore.trendTags
+                  .where((t) => !muteStore.banTags
+                      .any((b) => b.isRegexMatch(t.tag)))
+                  .toList();
+              if (filtered.isEmpty) return const SliverToBoxAdapter();
+              return SliverPadding(
+                padding: const EdgeInsets.all(8.0),
+                sliver: SliverGrid(
+                    delegate: SliverChildBuilderDelegate((context, index) {
                     return GestureDetector(
                       onTap: () {
                         Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(builder: (_) {
                           return ResultPage(
-                            word: tags[index].tag,
+                            word: filtered[index].tag,
                           );
                         }));
                       },
                       onLongPress: () {
                         Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(builder: (_) {
-                          return IllustLightingPage(id: tags[index].illust.id);
+                          return IllustLightingPage(id: filtered[index].illust.id);
                         }));
                       },
                       child: Card(
@@ -386,7 +392,7 @@ class _SearchPageState extends State<SearchPage>
                         child: Stack(
                           children: <Widget>[
                             PixivImage(
-                              tags[index].illust.imageUrls.squareMedium,
+                              filtered[index].illust.imageUrls.squareMedium,
                               fit: BoxFit.cover,
                             ),
                             Opacity(
@@ -402,15 +408,15 @@ class _SearchPageState extends State<SearchPage>
                                   mainAxisSize: MainAxisSize.min,
                                   children: <Widget>[
                                     Text(
-                                      "#${tags[index].tag}",
+                                      "#${filtered[index].tag}",
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                           color: Colors.white, fontSize: 12),
                                     ),
-                                    if (tags[index].translatedName != null &&
-                                        tags[index].translatedName!.isNotEmpty)
+                                    if (filtered[index].translatedName != null &&
+                                        filtered[index].translatedName!.isNotEmpty)
                                       Text(
-                                        tags[index].translatedName!,
+                                        filtered[index].translatedName!,
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                             color: Colors.white, fontSize: 10),
@@ -424,10 +430,10 @@ class _SearchPageState extends State<SearchPage>
                         ),
                       ),
                     );
-                  }, childCount: _trendTagsStore.trendTags.length),
+                  }, childCount: filtered.length),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: rowCount)),
-            ),
+            );}),
           SliverToBoxAdapter(
             child: Container(
               height: (MediaQuery.of(context).size.width / 3) - 16,

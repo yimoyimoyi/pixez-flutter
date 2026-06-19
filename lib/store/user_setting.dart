@@ -88,6 +88,7 @@ abstract class _UserSetting with Store {
   static const String LONG_PRESS_SAVE_CONFIRM_KEY = "long_press_save_confirm";
   static const String USE_DYNAMIC_COLOR_KEY = "use_dynamic_color";
   static const String SEED_COLOR_KEY = "seed_color";
+  static const String DISABLE_DOH_KEY = "disable_doh";
   static const String SWIPE_CHANGE_ARTWORK_KEY = "swipe_change_artwork";
   static const String USE_SAUNCE_NAO_WEBVIEW = "use_sauce_nao_webview";
   static const String FEED_AI_BADGE_KEY = "feed_ai_badge";
@@ -194,6 +195,8 @@ abstract class _UserSetting with Store {
   int themeInitState = 0;
   @observable
   bool swipeChangeArtwork = false;
+  @observable
+  bool disableDoh = false;
   @observable
   bool useSaunceNaoWebview = false;
   @observable
@@ -369,6 +372,12 @@ abstract class _UserSetting with Store {
   }
 
   @action
+  setDisableDoh(bool v) async {
+    await prefs.setBool(DISABLE_DOH_KEY, v);
+    disableDoh = v;
+  }
+
+  @action
   setUseSaunceNaoWebview(bool v) async {
     await prefs.setBool(USE_SAUNCE_NAO_WEBVIEW, v);
     useSaunceNaoWebview = v;
@@ -539,6 +548,7 @@ abstract class _UserSetting with Store {
     longPressSaveConfirm = prefs.getBool(LONG_PRESS_SAVE_CONFIRM_KEY) ?? false;
     imagePickerType = prefs.getInt(IMAGE_PICKER_TYPE_KEY) ?? 0;
     swipeChangeArtwork = prefs.getBool(SWIPE_CHANGE_ARTWORK_KEY) ?? true;
+    disableDoh = prefs.getBool(DISABLE_DOH_KEY) ?? false;
     useSaunceNaoWebview = prefs.getBool(USE_SAUNCE_NAO_WEBVIEW) ?? false;
     dragStartX = prefs.getDouble(DRAG_START_X_KEY) ?? 0;
     autoTagWhenStar = prefs.getBool(AUTO_TAG_WHEN_STAR_KEY) ?? false;

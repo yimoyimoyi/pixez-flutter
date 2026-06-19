@@ -16,6 +16,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/main.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
@@ -62,12 +63,23 @@ class _SoupPageState extends State<SoupPage> {
                   flexibleSpace: FlexibleSpaceBar(
                     centerTitle: true,
                     title: Text(widget.spotlight!.pureTitle),
-                    background: NullHero(
-                      tag: widget.heroTag,
-                      child: PixivImage(
-                        widget.spotlight!.thumbnail,
-                        fit: BoxFit.cover,
-                        height: 200,
+                    background: GestureDetector(
+                      onLongPress: () {
+                        saveStore.saveImageByUrl(
+                          widget.spotlight!.thumbnail,
+                          widget.spotlight!.pureTitle,
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已加入下载队列')),
+                        );
+                      },
+                      child: NullHero(
+                        tag: widget.heroTag,
+                        child: PixivImage(
+                          widget.spotlight!.thumbnail,
+                          fit: BoxFit.cover,
+                          height: 200,
+                        ),
                       ),
                     ),
                   ),

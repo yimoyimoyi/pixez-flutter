@@ -121,11 +121,20 @@ Widget buildFluentUI(BuildContext context) {
         ],
         locale: userSetting.locale,
         home: Builder(builder: (context) {
+          final brightness = FluentTheme.of(context).brightness;
           return AnnotatedRegion<SystemUiOverlayStyle>(
             value: SystemUiOverlayStyle(
               systemNavigationBarColor: Colors.transparent,
               systemNavigationBarDividerColor: Colors.transparent,
               statusBarColor: Colors.transparent,
+              systemNavigationBarContrastEnforced: true,
+              systemStatusBarContrastEnforced: true,
+              systemNavigationBarIconBrightness: brightness == Brightness.dark
+                  ? Brightness.light
+                  : Brightness.dark,
+              statusBarIconBrightness: brightness == Brightness.dark
+                  ? Brightness.light
+                  : Brightness.dark,
             ),
             child: SplashPage(),
           );

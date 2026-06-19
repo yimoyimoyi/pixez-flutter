@@ -227,14 +227,18 @@ class _HelloPageState extends State<HelloPage> {
   }
 
   Widget _buildNavigationBar(BuildContext context) {
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: NavigationBar(
-          height: 68,
-          backgroundColor: Theme.of(
-            context,
-          ).colorScheme.surface.withValues(alpha: 0.9),
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: NavigationBar(
+              height: 68,
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.surface.withValues(alpha: 0.9),
           destinations: [
             NavigationDestination(
               icon: Icon(Icons.home),
@@ -269,7 +273,14 @@ class _HelloPageState extends State<HelloPage> {
           },
         ),
       ),
-    );
+    ),
+    if (bottomPadding > 0)
+      Container(
+        height: bottomPadding,
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+      ),
+  ],
+);
   }
 
   PageView _buildPageView(BuildContext context) {
