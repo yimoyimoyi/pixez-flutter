@@ -23,6 +23,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/common_back_area.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/painter_avatar.dart';
@@ -224,38 +225,51 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
   Widget _buildBody(BuildContext context) {
     return Container(
       child: Scaffold(
-        body: NestedScrollView(
-          controller: _scrollController,
-          body: TabBarView(
-            controller: _tabController,
-            children: [
-              WorksPage(
-                id: widget.id,
-                store: _workStore,
-                portal: "Work",
-                workType: _userWorkType,
-                onWorkTypeChange: (String newType) {
-                  setState(() {
-                    _userWorkType = newType;
-                  });
-                },
+        body: Stack(
+          children: [
+            NestedScrollView(
+              controller: _scrollController,
+              body: TabBarView(
+                controller: _tabController,
+                children: [
+                  WorksPage(
+                    id: widget.id,
+                    store: _workStore,
+                    portal: "Work",
+                    workType: _userWorkType,
+                    onWorkTypeChange: (String newType) {
+                      setState(() {
+                        _userWorkType = newType;
+                      });
+                    },
+                  ),
+                  BookMarkNestedPage(
+                    id: widget.id,
+                    store: _bookmarkStore,
+                    portal: "Book",
+                  ),
+                  UserDetailPage(
+                    key: PageStorageKey('Tab2'),
+                    userDetail: userStore.userDetail,
+                    isNewNested: true,
+                  ),
+                ],
               ),
-              BookMarkNestedPage(
-                id: widget.id,
-                store: _bookmarkStore,
-                portal: "Book",
-              ),
-              UserDetailPage(
-                key: PageStorageKey('Tab2'),
-                userDetail: userStore.userDetail,
-                isNewNested: true,
-              ),
-            ],
-          ),
-          headerSliverBuilder:
-              (BuildContext context, bool? innerBoxIsScrolled) {
+              headerSliverBuilder:
+                  (BuildContext context, bool? innerBoxIsScrolled) {
                 return _HeaderSlivers(innerBoxIsScrolled, context);
               },
+            ),
+            BackToTopButton(
+              visible: backToTopVisible,
+              heroTag: 'bt_user_${widget.id}',
+              onPressed: () {
+                if (_scrollController.hasClients) {
+                  _scrollController.jumpTo(0);
+                }
+              },
+            ),
+          ],
         ),
       ),
     );

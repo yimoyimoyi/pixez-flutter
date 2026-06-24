@@ -14,9 +14,12 @@
  *
  */
 
+import 'dart:async';
+
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/main.dart';
@@ -40,61 +43,92 @@ class NovelUserWorkPage extends StatefulWidget {
 
 class _NovelUserWorkPageState extends State<NovelUserWorkPage> {
   late NovelLightingStore _store;
+  final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
+  Timer? _pollTimer;
 
   @override
   void initState() {
     _store = widget.store;
     super.initState();
     _store.fetch();
+    // 用 PrimaryScrollController 避免破坏 NestedScrollView 协调
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (!mounted) return;
+      final ctrl = PrimaryScrollController.maybeOf(context);
+      if (ctrl == null || !ctrl.hasClients) return;
+      final visible = ctrl.position.pixels > 500;
+      if (_backToTopNotifier.value != visible) {
+        _backToTopNotifier.value = visible;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _backToTopNotifier.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      bottom: false,
-      child: Builder(builder: (context) {
-        return EasyRefresh.builder(
-            controller: _store.controller,
-            onLoad: () {
-              _store.next();
-            },
-            onRefresh: () {
-              _store.fetch();
-            },
-            header: PixezDefault.header(context,
-                position: IndicatorPosition.locator, safeArea: false),
-            footer: PixezDefault.footer(
-              context,
-              position: IndicatorPosition.locator,
-            ),
-            childBuilder: (_, phy) {
-              return Observer(builder: (_) {
-                final userIsMe = accountStore.now != null &&
-                    accountStore.now!.userId == widget.id.toString();
-                return CustomScrollView(
-                  physics: phy,
-                  key: PageStorageKey("novel_bookmark"),
-                  slivers: [
-                    userIsMe
-                        ? SliverPinnedOverlapInjector(
-                            handle:
-                                NestedScrollView.sliverOverlapAbsorberHandleFor(
-                                    context),
-                          )
-                        : SliverOverlapInjector(
-                            handle:
-                                NestedScrollView.sliverOverlapAbsorberHandleFor(
-                                    context),
-                          ),
-                    const HeaderLocator.sliver(),
-                    _buildListBody(),
-                    const FooterLocator.sliver(),
-                  ],
-                );
-              });
-            });
-      }),
+    return Stack(
+      children: [
+        SafeArea(
+          top: false,
+          bottom: false,
+          child: Builder(builder: (context) {
+            return EasyRefresh.builder(
+                controller: _store.controller,
+                onLoad: () {
+                  _store.next();
+                },
+                onRefresh: () {
+                  _store.fetch();
+                },
+                header: PixezDefault.header(context,
+                    position: IndicatorPosition.locator, safeArea: false),
+                footer: PixezDefault.footer(
+                  context,
+                  position: IndicatorPosition.locator,
+                ),
+                childBuilder: (_, phy) {
+                  return Observer(builder: (_) {
+                    final userIsMe = accountStore.now != null &&
+                        accountStore.now!.userId == widget.id.toString();
+                    return CustomScrollView(
+                      physics: phy,
+                      key: const PageStorageKey("novel_bookmark"),
+                      slivers: [
+                        userIsMe
+                            ? SliverPinnedOverlapInjector(
+                                handle: NestedScrollView
+                                    .sliverOverlapAbsorberHandleFor(context),
+                              )
+                            : SliverOverlapInjector(
+                                handle: NestedScrollView
+                                    .sliverOverlapAbsorberHandleFor(context),
+                              ),
+                        const HeaderLocator.sliver(),
+                        _buildListBody(),
+                        const FooterLocator.sliver(),
+                      ],
+                    );
+                  });
+                });
+          }),
+        ),
+        ValueListenableBackToTopButton(
+          notifier: _backToTopNotifier,
+          heroTag: 'bt_novel_user_work_${widget.id}',
+          onPressed: () {
+            final ctrl = PrimaryScrollController.maybeOf(context);
+            if (ctrl != null && ctrl.hasClients) {
+              ctrl.jumpTo(0);
+            }
+          },
+        ),
+      ],
     );
   }
 

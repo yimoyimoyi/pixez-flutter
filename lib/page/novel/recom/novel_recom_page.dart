@@ -17,6 +17,7 @@
 import 'dart:async';
 
 import 'package:easy_refresh/easy_refresh.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/exts.dart';
 import 'package:flutter/material.dart';
@@ -126,23 +127,13 @@ class _NovelRecomPageState extends State<NovelRecomPage>
         );
       }),
     ),
-        ValueListenableBuilder<bool>(
-          valueListenable: _backToTopNotifier,
-          builder: (_, visible, __) {
-            if (!visible) return const SizedBox.shrink();
-            return Positioned(
-              right: 16,
-              bottom: 80,
-              child: FloatingActionButton.small(
-                heroTag: 'bt_novel_recom',
-                onPressed: () {
-                  if (_scrollController.hasClients) {
-                    _scrollController.jumpTo(0);
-                  }
-                },
-                child: const Icon(Icons.keyboard_arrow_up),
-              ),
-            );
+        ValueListenableBackToTopButton(
+          notifier: _backToTopNotifier,
+          heroTag: 'bt_novel_recom',
+          onPressed: () {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
           },
         ),
       ],

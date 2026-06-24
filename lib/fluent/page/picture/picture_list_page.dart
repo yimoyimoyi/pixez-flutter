@@ -3,6 +3,7 @@ import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/fluent/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
+import 'package:pixez/utils/swipe_evaluator.dart';
 
 class PictureListPage extends StatefulWidget {
   final IllustStore store;
@@ -33,6 +34,9 @@ class _PictureListPageState extends State<PictureListPage> {
   // 累积拖拽位移
   double _dragTotalDx = 0;
   double _dragTotalDy = 0;
+
+  // 滑动判定器
+  final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
 
   @override
   void initState() {
@@ -92,23 +96,31 @@ class _PictureListPageState extends State<PictureListPage> {
                 onHorizontalDragEnd: (details) {
                   final v = details.velocity.pixelsPerSecond;
 
-                  // 判定 1：速度水平占主导
-                  if (v.dx.abs() <= v.dy.abs() * 1.5) return;
+                  // 使用统一的滑动判定器
+                  final result = _swipeEvaluator.evaluate(
+                    totalDx: _dragTotalDx,
+                    totalDy: _dragTotalDy,
+                    velocityDx: v.dx,
+                    velocityDy: v.dy,
+                    screenWidth: screenWidth * 2,
+                  );
 
-                  // 判定 2：累积位移水平占主导
-                  if (_dragTotalDx.abs() <= _dragTotalDy.abs() * 1.5) return;
+                  if (!result.accepted) return;
 
-                  // 判定 3：水平速度够大
-                  if (v.dx.abs() <= screenWidth) return;
+                  int targetPage = nowPosition;
+                  if (result.direction == SwipeDirection.left) {
+                    targetPage++;
+                  } else if (result.direction == SwipeDirection.right) {
+                    targetPage--;
+                  }
+                  targetPage = targetPage.clamp(0, _iStores.length - 1);
 
-                  int result = nowPosition;
-                  if (v.dx < 0) { result++; } else { result--; }
-                  result = result.clamp(0, _iStores.length - 1);
-
-                  _pageController.animateToPage(result,
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut);
-                  setState(() => nowPosition = result);
+                  if (targetPage != nowPosition) {
+                    _pageController.animateToPage(targetPage,
+                        duration: const Duration(milliseconds: 150),
+                        curve: Curves.easeInOut);
+                    setState(() => nowPosition = targetPage);
+                  }
                 },
               ),
             ),

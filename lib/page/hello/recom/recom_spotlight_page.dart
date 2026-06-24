@@ -15,14 +15,13 @@
  */
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/illust_card.dart';
-import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/exts.dart';
 import 'package:pixez/i18n.dart';
@@ -34,6 +33,7 @@ import 'package:pixez/page/hello/recom/recom_user_store.dart';
 import 'package:pixez/page/hello/recom/spotlight_store.dart';
 import 'package:pixez/page/soup/soup_page.dart';
 import 'package:pixez/page/spotlight/spotlight_page.dart';
+import 'package:pixez/utils/refresh_config.dart';
 import 'package:waterfall_flow/waterfall_flow.dart';
 
 class RecomSpolightPage extends StatefulWidget {
@@ -55,8 +55,7 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
   @override
   void initState() {
     _scrollController = ScrollController();
-    _easyRefreshController = EasyRefreshController(
-        controlFinishLoad: true, controlFinishRefresh: true);
+    _easyRefreshController = RefreshConfig.createController();
     _recomUserStore = RecomUserStore(_easyRefreshController);
     spotlightStore = SpotlightStore(null);
     _lightingStore = LightingStore(
@@ -88,9 +87,9 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
       children: [
         EasyRefresh.builder(
           controller: _easyRefreshController,
-          callLoadOverOffset: Platform.isIOS ? 2 : 5,
-          header: PixezDefault.header(context),
-          footer: PixezDefault.footer(context),
+          callLoadOverOffset: RefreshConfig.callLoadOverOffset,
+          header: RefreshConfig.header(context),
+          footer: RefreshConfig.footer(context),
           onRefresh: () async {
             await fetchT();
           },
@@ -102,23 +101,13 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
             builder: (context) => _buildWaterFall(context, physics),
           ),
         ),
-        ValueListenableBuilder<bool>(
-          valueListenable: _backToTopNotifier,
-          builder: (_, visible, __) {
-            if (!visible) return const SizedBox.shrink();
-            return Positioned(
-              right: 16,
-              bottom: 80,
-              child: FloatingActionButton.small(
-                heroTag: 'backToTop_recom',
-                onPressed: () {
-                  if (_scrollController.hasClients) {
-                    _scrollController.jumpTo(0);
-                  }
-                },
-                child: const Icon(Icons.keyboard_arrow_up),
-              ),
-            );
+        ValueListenableBackToTopButton(
+          notifier: _backToTopNotifier,
+          heroTag: 'backToTop_recom',
+          onPressed: () {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
           },
         ),
       ],
@@ -140,9 +129,10 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
         controller: _scrollController,
         physics: physics,
         slivers: [
-          SliverToBoxAdapter(
-            child: Container(height: MediaQuery.of(context).padding.top),
-          ),
+          if (!userSetting.isBangs)
+            SliverToBoxAdapter(
+              child: Container(height: MediaQuery.of(context).padding.top),
+            ),
           SliverToBoxAdapter(
             child: _buildFirstRow(context),
           ),

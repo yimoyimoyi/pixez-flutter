@@ -18,6 +18,7 @@ import 'dart:async';
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
@@ -295,23 +296,13 @@ class _NovelLightingListState extends State<NovelLightingList> {
             }),
           ),
         ),
-        ValueListenableBuilder<bool>(
-          valueListenable: _backToTopNotifier,
-          builder: (_, visible, __) {
-            if (!visible) return const SizedBox.shrink();
-            return Positioned(
-              right: 16,
-              bottom: 80, // 避开底部导航栏
-              child: FloatingActionButton.small(
-                heroTag: 'novelBackToTop',
-                onPressed: () {
-                  if (_scrollController.hasClients) {
-                    _scrollController.jumpTo(0);
-                  }
-                },
-                child: const Icon(Icons.keyboard_arrow_up),
-              ),
-            );
+        ValueListenableBackToTopButton(
+          notifier: _backToTopNotifier,
+          heroTag: 'novelBackToTop',
+          onPressed: () {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
           },
         ),
       ],

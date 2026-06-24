@@ -127,10 +127,22 @@ class _HelloPageState extends State<HelloPage> {
       builder: (context, constraints) {
         final wide = constraints.maxWidth > constraints.maxHeight;
         return Scaffold(
-          body: Row(
+          body: Column(
             children: <Widget>[
-              if (wide) ..._buildRail(context),
-              Expanded(child: _buildPageView(context)),
+              // 异形屏兼容：isBangs 开关打开时在顶部添加状态栏高度的间距
+              Observer(
+                builder: (_) => userSetting.isBangs
+                    ? SizedBox(height: MediaQuery.of(context).padding.top)
+                    : const SizedBox.shrink(),
+              ),
+              Expanded(
+                child: Row(
+                  children: <Widget>[
+                    if (wide) ..._buildRail(context),
+                    Expanded(child: _buildPageView(context)),
+                  ],
+                ),
+              ),
             ],
           ),
           extendBody: true,
@@ -285,6 +297,7 @@ class _HelloPageState extends State<HelloPage> {
 
   PageView _buildPageView(BuildContext context) {
     return PageView.builder(
+      physics: const NeverScrollableScrollPhysics(),
       itemCount: 5,
       controller: _pageController,
       onPageChanged: (index) {

@@ -4,6 +4,7 @@ import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
+import 'package:pixez/utils/swipe_evaluator.dart';
 
 class PictureListPage extends StatefulWidget {
   final IllustStore store;
@@ -38,6 +39,11 @@ class _PictureListPageState extends State<PictureListPage> {
   bool _pointerIsDown = false;
   int _dragStartPage = 0;
   bool _evaluating = false;
+  Duration _gestureDuration = Duration.zero;
+  Duration _pointerDownTimeStamp = Duration.zero;
+
+  // 滑动判定器
+  final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
 
   @override
   void initState() {
@@ -61,6 +67,13 @@ class _PictureListPageState extends State<PictureListPage> {
     _totalDy = 0;
     _pointerIsDown = true;
     _dragStartPage = nowPosition;
+    _gestureDuration = Duration.zero;
+    _pointerDownTimeStamp = e.timeStamp;
+    // 新手势开始时，取消正在进行的 bounceBack 动画
+    if (_evaluating) {
+      _evaluating = false;
+      _pageController.jumpTo(_pageController.page ?? nowPosition.toDouble());
+    }
   }
 
   void _onPointerMove(PointerMoveEvent e) {
@@ -71,7 +84,8 @@ class _PictureListPageState extends State<PictureListPage> {
 
   void _onPointerUp(PointerUpEvent e) {
     _pointerIsDown = false;
-    // 等 PageView snap/fling 动画结束后判定
+    _gestureDuration = e.timeStamp - _pointerDownTimeStamp;
+    // 等待 PageView snap/fling 动画结束后再判定
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) _evaluateSwipe();
     });
@@ -82,26 +96,35 @@ class _PictureListPageState extends State<PictureListPage> {
     final currentPage = _pageController.page?.round() ?? nowPosition;
     if (currentPage == _dragStartPage) return;
 
-    // 判定 1：方向需偏向水平
-    if (_totalDx.abs() <= _totalDy.abs() * 1.5) {
+    // 使用实际手势耗时计算速度（至少 50ms 防止除零）
+    final durationMs = _gestureDuration.inMilliseconds.clamp(50, 2000);
+    final durationSec = durationMs / 1000.0;
+
+    // 使用统一的滑动判定器
+    final result = _swipeEvaluator.evaluate(
+      totalDx: _totalDx,
+      totalDy: _totalDy,
+      velocityDx: _totalDx / durationSec,
+      velocityDy: _totalDy / durationSec,
+      screenWidth: screenWidth * 2,
+    );
+
+    if (!result.accepted) {
       _bounceBack();
       return;
     }
-    // 判定 2：水平位移需超过屏幕宽度 50%
-    if (_totalDx.abs() < screenWidth) {
-      _bounceBack();
-      return;
-    }
-    // 接受
+
+    // 接受滑动
     setState(() => nowPosition = currentPage);
   }
 
   void _bounceBack() {
     _evaluating = true;
-    _pageController.animateToPage(_dragStartPage,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeInOut)
-      .then((_) => _evaluating = false);
+    _pageController
+        .animateToPage(_dragStartPage,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeInOut)
+        .then((_) => _evaluating = false);
   }
 
   @override

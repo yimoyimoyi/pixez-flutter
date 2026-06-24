@@ -62,7 +62,7 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    retryNum = -2;
+    retryNum = 0;
     return handler.next(response);
   }
 
@@ -136,24 +136,37 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
       );
       return handler.resolve(response);
     }
-    if (err.message?.contains(
-                "Connection closed before full header was received") ==
-            true &&
-        retryNum < 2) {
-      print('retry $retryNum =========================');
-      retryNum++;
-      RequestOptions options = err.requestOptions;
-      var response = await apiClient.httpClient.request(
-        options.path,
-        options: Options(
-          method: options.method,
-          headers: options.headers,
-          contentType: options.contentType,
-        ),
-        data: options.data,
-        queryParameters: options.queryParameters,
-      );
-      return handler.resolve(response);
+    // 自动重试：仅在没有收到响应时（连接/传输层错误），上限 2 次
+    if (err.response == null && retryNum < 2) {
+      final errMsg = '${err.message ?? ''} ${err.error ?? ''}';
+      final shouldRetry = err.type == DioExceptionType.unknown ||
+          err.type == DioExceptionType.connectionError ||
+          err.type == DioExceptionType.connectionTimeout ||
+          err.type == DioExceptionType.receiveTimeout ||
+          errMsg.contains('IncompleteMessage') ||
+          errMsg.contains('Connection closed') ||
+          errMsg.contains('broken pipe');
+      if (shouldRetry) {
+        print('retry $retryNum ========= ${err.type}: ${errMsg.substring(0, 100)}');
+        retryNum++;
+        await Future.delayed(Duration(milliseconds: 300 << retryNum));
+        try {
+          RequestOptions options = err.requestOptions;
+          var response = await apiClient.httpClient.request(
+            options.path,
+            options: Options(
+              method: options.method,
+              headers: options.headers,
+              contentType: options.contentType,
+            ),
+            data: options.data,
+            queryParameters: options.queryParameters,
+          );
+          return handler.resolve(response);
+        } catch (e) {
+          print('retry $retryNum failed: $e');
+        }
+      }
     }
     return handler.reject(err);
   }

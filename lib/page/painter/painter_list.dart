@@ -14,11 +14,10 @@
  *
  */
 
-import 'dart:async';
-
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/component/back_to_top_button.dart';
 import 'package:pixez/component/painer_card.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/lighting/lighting_store.dart';
@@ -43,7 +42,6 @@ class _PainterListState extends State<PainterList> {
   late PainterListStore _painterListStore;
   late ScrollController _scrollController;
   final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
-  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -55,13 +53,6 @@ class _PainterListState extends State<PainterList> {
     super.initState();
     _painterListStore.fetch();
     _scrollController.addListener(_onScroll);
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      final visible = _scrollController.position.pixels > 500;
-      if (_backToTopNotifier.value != visible) {
-        _backToTopNotifier.value = visible;
-      }
-    });
   }
 
   void _onScroll() {
@@ -86,7 +77,6 @@ class _PainterListState extends State<PainterList> {
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
     _scrollController.dispose();
     _easyRefreshController.dispose();
     _backToTopNotifier.dispose();
@@ -117,23 +107,13 @@ class _PainterListState extends State<PainterList> {
                 : Container(),
           );
         }),
-        ValueListenableBuilder<bool>(
-          valueListenable: _backToTopNotifier,
-          builder: (_, visible, __) {
-            if (!visible) return const SizedBox.shrink();
-            return Positioned(
-              right: 16,
-              bottom: 80,
-              child: FloatingActionButton.small(
-                heroTag: 'bt_painter_list',
-                onPressed: () {
-                  if (_scrollController.hasClients) {
-                    _scrollController.jumpTo(0);
-                  }
-                },
-                child: const Icon(Icons.keyboard_arrow_up),
-              ),
-            );
+        ValueListenableBackToTopButton(
+          notifier: _backToTopNotifier,
+          heroTag: 'bt_painter_list',
+          onPressed: () {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
           },
         ),
       ],
