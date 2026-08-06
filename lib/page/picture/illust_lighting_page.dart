@@ -45,6 +45,7 @@ import 'package:pixez/page/picture/picture_list_page.dart';
 import 'package:pixez/page/picture/tag_for_illust_page.dart';
 import 'package:pixez/page/picture/ugoira_loader.dart';
 import 'package:pixez/page/picture/user_follow_button.dart';
+import 'package:pixez/utils/haptic_util.dart';
 import 'package:pixez/page/report/report_items_page.dart';
 import 'package:pixez/page/search/result_page.dart';
 import 'package:pixez/page/user/user_store.dart';
@@ -308,15 +309,15 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                       } else {
                         tags = null;
                       }
-                      _illustStore.star(
+                      bool success = await _illustStore.star(
                         restrict: userSetting.defaultPrivateLike
                             ? "private"
                             : "public",
                         tags: tags,
                       );
-                      if (userSetting.followAfterStar) {
-                        bool success = await _illustStore.followAfterStar();
-                        if (success) {
+                      if (success && userSetting.followAfterStar) {
+                        bool followSuccess = await _illustStore.followAfterStar();
+                        if (followSuccess) {
                           userStore?.isFollow = true;
                           BotToast.showText(
                             text:
@@ -811,6 +812,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
         break;
       case 2:
         {
+          HapticUtil.light();
           await Clipboard.setData(ClipboardData(text: f.name));
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -825,6 +827,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
   Widget buildRow(BuildContext context, Tags f) {
     return GestureDetector(
       onLongPress: () async {
+        HapticUtil.heavy();
         await _longPressTag(context, f);
       },
       onTap: () {
@@ -1139,15 +1142,18 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                     ListTile(
                       leading: Icon(Icons.save),
                       title: Text(I18n.of(context).save),
-                      onTap: () {
+                      onTap: () async {
                         Navigator.of(context).pop("OK");
                         if (userSetting.starAfterSave &&
                             (_illustStore.state == 0)) {
-                          _illustStore.star(
+                          bool success = await _illustStore.star(
                             restrict: userSetting.defaultPrivateLike
                                 ? "private"
                                 : "public",
                           );
+                          if (success && userSetting.followAfterStar) {
+                            await _illustStore.followAfterStar();
+                          }
                         }
                       },
                     ),
@@ -1320,6 +1326,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
   }
 
   Future<void> _showBookMarkTag() async {
+    HapticUtil.heavy();
     final result = await Leader.pushWithScaffold(
       context,
       TagForIllustPage(id: widget.id),
@@ -1331,7 +1338,10 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       if (userSetting.saveAfterStar && (_illustStore.state == 0)) {
         saveStore.saveImage(_illustStore.illusts!);
       }
-      _illustStore.star(restrict: restrict, tags: tags, force: true);
+      bool success = await _illustStore.star(restrict: restrict, tags: tags, force: true);
+      if (success && userSetting.followAfterStar) {
+        await _illustStore.followAfterStar();
+      }
     }
   }
 

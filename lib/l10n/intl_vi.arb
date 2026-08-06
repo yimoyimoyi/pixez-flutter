@@ -333,10 +333,14 @@
   "ugoira_only": "Chỉ Ugoira",
   "ugoira_none": "Không có Ugoira",
   "network_mode": "Connection mode",
+  "network_mode_restart_may_required": "Bạn có thể cần khởi động lại app.",
+  "network_mode_oauth": "Xác minh danh tính",
+  "network_mode_api_service": "Dịch vụ API",
   "network_mode_compat": "Compatibility mode",
   "network_mode_compat_message": "Try this when content or images load inconsistently.",
   "network_mode_ech": "Enhanced connection",
   "network_mode_ech_message": "Try this when the app opens but service responses fail.",
   "network_mode_standard": "Standard connection",
-  "network_mode_standard_message": "Recommended for most networks."
+  "network_mode_standard_message": "Recommended for most networks.",
+  "ignore_current_version_update": "Ignore current version update"
 }

@@ -61,8 +61,9 @@ abstract class _NovelStoreBase with Store {
   bookPosition(double offset) async {
     LPrinter.d("bookPosition $offset");
     await _novelViewerPersistProvider.open();
-    await _novelViewerPersistProvider
-        .insert(NovelViewerPersist(novelId: id, offset: offset));
+    await _novelViewerPersistProvider.insert(
+      NovelViewerPersist(novelId: id, offset: offset),
+    );
     positionBooked = true;
   }
 
@@ -96,7 +97,8 @@ abstract class _NovelStoreBase with Store {
       // 2) 再取正文（HTML 解析，可能失败）
       final response = await apiClient.webviewNovel(id);
       final html = response.data is String ? response.data : response.data.toString();
-      String? json = _parseHtml(html);
+      // 使用花括号配对解析（上游 parseNovelJsonFromHtml，鲁棒性优于正则）
+      final json = parseNovelJsonFromHtml(html);
       if (json == null) {
         // 尝试从缓存加载（方案 A）
         if (await _loadNovelTextFromCache()) return;
@@ -214,27 +216,7 @@ abstract class _NovelStoreBase with Store {
     }
   }
 
-  String? _parseHtml(String html) {
-    var document = parse(html);
-    final scriptElement = document.querySelector('script');
-    if (scriptElement == null) {
-      print('novel _parseHtml: no <script> found');
-      return null;
-    }
-    String scriptContent = scriptElement.innerHtml;
-    // 尝试多种正则匹配（Pixiv 页面结构可能变化）
-    for (final regex in [
-      RegExp(r'novel: ({.*?}),\n\s*isOwnWork'),
-      RegExp(r'novel: ({.*?})'),  // fallback
-    ]) {
-      final match = regex.firstMatch(scriptContent);
-      if (match != null) {
-        final json = match.group(1);
-        if (json != null && json.isNotEmpty) return json;
-      }
-    }
-    return null;
-  }
+  /// 解析函数已改用上游顶层 [parseNovelJsonFromHtml]（花括号配对解析）
 
   @action
   fetchOffset() async {
@@ -260,4 +242,53 @@ class ComputeSpan {
 Future<List<NovelSpansData>> buildSpans(NovelWebResponse webResponse) {
   final generator = NovelSpansGenerator();
   return Future.value(generator.buildSpans(webResponse));
+}
+
+String? parseNovelJsonFromHtml(String html) {
+  final document = parse(html);
+  for (final scriptElement in document.querySelectorAll('script')) {
+    final scriptContent = scriptElement.innerHtml;
+    final novelIndex = scriptContent.indexOf('novel:');
+    if (novelIndex == -1) {
+      continue;
+    }
+    final objectStart = scriptContent.indexOf('{', novelIndex);
+    if (objectStart == -1) {
+      continue;
+    }
+    return _readBalancedJsonObject(scriptContent, objectStart);
+  }
+  return null;
+}
+
+String? _readBalancedJsonObject(String source, int start) {
+  var depth = 0;
+  var inString = false;
+  var escaped = false;
+
+  for (var i = start; i < source.length; i++) {
+    final char = source[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char == '\\') {
+        escaped = true;
+      } else if (char == '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char == '"') {
+      inString = true;
+    } else if (char == '{') {
+      depth++;
+    } else if (char == '}') {
+      depth--;
+      if (depth == 0) {
+        return source.substring(start, i + 1);
+      }
+    }
+  }
+  return null;
 }

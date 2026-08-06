@@ -75,6 +75,13 @@ class TaskBean {
   });
 }
 
+class NetworkReloadMessage {
+  final NetworkMode networkMode;
+  final String? source;
+
+  NetworkReloadMessage({required this.networkMode, required this.source});
+}
+
 class Fetcher {
   BuildContext? context;
   List<TaskBean> queue = [];
@@ -204,9 +211,9 @@ class Fetcher {
     sendPortToChild?.send(
       IsoContactBean(
         state: IsoTaskState.RELOAD,
-        data: (
+        data: NetworkReloadMessage(
           networkMode: userSetting.networkMode,
-          pictureSource: userSetting.pictureSource,
+          source: userSetting.pictureSource,
         ),
       ),
     );
@@ -278,11 +285,11 @@ entryPoint(SendMessage message) async {
   await Hoster.initMap();
   Hoster.dnsQueryFetcher();
   final dio = Dio();
-  // 独立版本：自定义图床走系统默认HTTP → TLS正常，直连Pixiv走兼容模式
-  final useCompat = message.networkMode != NetworkMode.standard &&
-                     message.pictureSource == ImageHost;
   final client = await r.RhttpCompatibleClient.createSync(
-    settings: useCompat ? PixezNetworkSettings.compatible() : null,
+    settings: PixezNetworkSettings.forImages(
+      currentPictureSource,
+      currentNetworkMode,
+    ),
   );
   dio.interceptors.add(
     PixivImageSourceInterceptor(
@@ -301,15 +308,14 @@ entryPoint(SendMessage message) async {
     try {
       IsoContactBean isoContactBean = message;
       if (isoContactBean.state == IsoTaskState.RELOAD) {
-        final data = isoContactBean.data
-            as ({NetworkMode networkMode, String? pictureSource});
-        currentNetworkMode = data.networkMode;
-        currentPictureSource = data.pictureSource ?? currentPictureSource;
-        // 独立版本：RELOAD时自定义图床走系统默认HTTP
-        final reloadUseCompat = data.networkMode != NetworkMode.standard &&
-                                 currentPictureSource == ImageHost;
+        final reload = isoContactBean.data as NetworkReloadMessage;
+        currentNetworkMode = reload.networkMode;
+        currentPictureSource = reload.source ?? PixezNetworkSettings.imageHost;
         final newClient = await r.RhttpCompatibleClient.createSync(
-          settings: reloadUseCompat ? PixezNetworkSettings.compatible() : null,
+          settings: PixezNetworkSettings.forImages(
+            currentPictureSource,
+            currentNetworkMode,
+          ),
         );
         dio.httpClientAdapter = ConversionLayerAdapter(newClient);
         return;

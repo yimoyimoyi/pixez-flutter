@@ -333,10 +333,15 @@
   "user_page_info_title": "User info",
   "input_regexp_hint": "Enter regexp",
   "network_mode": "Connection mode",
+  "network_mode_restart_may_required": "You may need to restart the app.",
+  "network_mode_oauth": "Identity verification",
+  "network_mode_api_service": "API service",
   "network_mode_compat": "Compatibility mode",
   "network_mode_compat_message": "Try this when content or images load inconsistently.",
   "network_mode_ech": "Enhanced connection",
   "network_mode_ech_message": "Try this when the app opens but service responses fail.",
   "network_mode_standard": "Standard connection",
-  "network_mode_standard_message": "Recommended for most networks."
+  "network_mode_standard_message": "Recommended for most networks.",
+  "ignore_current_version_update": "Ignore current version update",
+  "haptic_feedback": "Haptic feedback"
 }

@@ -34,6 +34,7 @@ import 'package:pixez/page/picture/illust_store.dart';
 import 'package:pixez/page/picture/picture_list_page.dart';
 import 'package:pixez/page/picture/tag_for_illust_page.dart';
 import 'package:pixez/page/series/illust_series_page.dart';
+import 'package:pixez/utils/haptic_util.dart';
 
 class IllustCard extends StatefulWidget {
   final IllustStore store;
@@ -102,6 +103,7 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   _onLongPressSave() async {
+    HapticUtil.heavy();
     if (userSetting.longPressSaveConfirm) {
       final result = await showDialog(
         context: context,
@@ -132,9 +134,12 @@ class _IllustCardState extends State<IllustCard> {
     }
     saveStore.saveImage(store.illusts!);
     if (userSetting.starAfterSave && (store.state == 0)) {
-      store.star(
+      bool success = await store.star(
         restrict: userSetting.defaultPrivateLike ? "private" : "public",
       );
+      if (success && userSetting.followAfterStar) {
+        await store.followAfterStar();
+      }
     }
   }
 
@@ -403,15 +408,15 @@ class _IllustCardState extends State<IllustCard> {
                 } else {
                   tags = null;
                 }
-                store.star(
+                bool success = await store.star(
                   restrict: userSetting.defaultPrivateLike
                       ? "private"
                       : "public",
                   tags: tags,
                 );
-                if (userSetting.followAfterStar) {
-                  bool success = await store.followAfterStar();
-                  if (success) {
+                if (success && userSetting.followAfterStar) {
+                  bool followSuccess = await store.followAfterStar();
+                  if (followSuccess) {
                     BotToast.showText(
                       text:
                           "${store.illusts!.user.name} ${I18n.of(context).followed}",
@@ -420,6 +425,7 @@ class _IllustCardState extends State<IllustCard> {
                 }
               },
               onLongPress: () async {
+                HapticUtil.heavy();
                 final result = await showModalBottomSheet(
                   context: context,
                   clipBehavior: Clip.hardEdge,

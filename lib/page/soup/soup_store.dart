@@ -18,6 +18,7 @@ import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
 import 'package:dio/dio.dart';
+import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:mobx/mobx.dart';
 import 'package:html/parser.dart' show parse;
 import 'package:pixez/main.dart';
@@ -25,6 +26,7 @@ import 'package:pixez/models/amwork.dart';
 import 'package:rhttp/rhttp.dart' as r;
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:html/dom.dart';
+import 'package:rhttp/rhttp.dart' as r;
 
 part 'soup_store.g.dart';
 

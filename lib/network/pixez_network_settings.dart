@@ -18,8 +18,11 @@ class PixezNetworkSettings {
       return r.ClientSettings(
         enableEch: true,
         requireEch: true,
-        httpVersionPref: r.HttpVersionPref.http1_1,
-        tlsSettings: r.TlsSettings(verifyCertificates: false, sni: true),
+        tlsSettings: r.TlsSettings(
+          verifyCertificates: true,
+          rootCertSource: r.RootCertSource.webpki,
+          sni: true,
+        ),
         dnsSettings: r.DnsSettings.static(
           overrides: {
             appApiHost: ['104.18.10.118', '104.18.11.118'],
@@ -32,8 +35,9 @@ class PixezNetworkSettings {
     return compatible();
   }
 
-  static r.ClientSettings? forImages(NetworkMode mode, {String? pictureSource}) {
+  static r.ClientSettings? forImages(String? host, NetworkMode mode) {
     if (mode == NetworkMode.standard) return null;
+    if (host != imageHost) return null;
     return compatible();
   }
 

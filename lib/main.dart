@@ -104,9 +104,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    setState(() {
-      _appState = state;
-    });
+    if (Platform.isIOS) {
+      setState(() {
+        _appState = state;
+      });
+    }
   }
 
   @override
@@ -136,7 +138,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     super.initState();
     if (Platform.isIOS) WidgetsBinding.instance.addObserver(this);
-
     Future.delayed(Duration.zero, () {
       SingleInstancePlugin.argsParser(widget.arguments);
     });
@@ -269,28 +270,25 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
-  _buildMaskBuilder(BuildContext context, Widget? widget) {
-    if (userSetting.nsfwMask) {
-      final needShowMask = (Platform.isAndroid
-          ? (_appState == AppLifecycleState.paused ||
-                _appState == AppLifecycleState.paused)
-          : _appState == AppLifecycleState.inactive);
-      return Stack(
-        children: [
-          widget ?? Container(),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500),
-            child: needShowMask
-                ? Container(
-                    color: Theme.of(context).canvasColor,
-                    child: Center(child: Icon(Icons.privacy_tip_outlined)),
-                  )
-                : null,
-          ),
-        ],
-      );
-    } else {
-      return widget;
-    }
+  Widget? _buildMaskBuilder(BuildContext context, Widget? widget) {
+    if (!userSetting.nsfwMask) return widget;
+    final needShowMask = _appState == AppLifecycleState.inactive;
+    return Stack(
+      children: [
+        widget ?? const SizedBox.shrink(),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 500),
+          child: needShowMask
+              ? Container(
+                  key: const ValueKey('recent_screen_mask'),
+                  color: Theme.of(context).canvasColor,
+                  child: const Center(
+                    child: Icon(Icons.privacy_tip_outlined),
+                  ),
+                )
+              : const SizedBox.shrink(key: ValueKey('recent_screen_unmask')),
+        ),
+      ],
+    );
   }
 }

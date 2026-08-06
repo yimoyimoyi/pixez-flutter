@@ -333,10 +333,14 @@
   "popular_male_desc": "Populer di kalangan pria",
   "popular_female_desc": "Populer di kalangan wanita",
   "network_mode": "Connection mode",
+  "network_mode_restart_may_required": "Anda mungkin perlu memulai ulang app.",
+  "network_mode_oauth": "Verifikasi identitas",
+  "network_mode_api_service": "Layanan API",
   "network_mode_compat": "Compatibility mode",
   "network_mode_compat_message": "Try this when content or images load inconsistently.",
   "network_mode_ech": "Enhanced connection",
   "network_mode_ech_message": "Try this when the app opens but service responses fail.",
   "network_mode_standard": "Standard connection",
-  "network_mode_standard_message": "Recommended for most networks."
+  "network_mode_standard_message": "Recommended for most networks.",
+  "ignore_current_version_update": "Ignore current version update"
 }

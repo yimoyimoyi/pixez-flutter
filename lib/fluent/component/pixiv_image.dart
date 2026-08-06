@@ -15,6 +15,7 @@
  */
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
@@ -71,11 +72,11 @@ class PixivImage extends StatefulWidget {
   static Dio? _cacheDio;
 
   static Future<void> generatePixivCache() async {
-    // 独立版本：自定义图床走系统默认HTTP，直连Pixiv走兼容模式
-    final imageUseCompat = userSetting.networkMode != NetworkMode.standard &&
-                           userSetting.pictureSource == ImageHost;
     final client = await r.RhttpCompatibleClient.createSync(
-      settings: imageUseCompat ? PixezNetworkSettings.compatible() : null,
+      settings: PixezNetworkSettings.forImages(
+        userSetting.pictureSource,
+        userSetting.networkMode,
+      ),
     );
     final existing = _cacheDio;
     if (existing != null) {
@@ -269,10 +270,41 @@ class _PixivImageState extends State<PixivImage> {
       return widget.placeWidget ?? Container(height: height);
     }
 
+    final size = min(min(width ?? 60, height ?? 60), 60.0);
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
-      placeholder: (context, url) =>
-          widget.placeWidget ?? Container(height: height),
+      placeholder: widget.placeWidget == null
+          ? null
+          : (context, url) =>
+                widget.placeWidget ??
+                Container(
+                  height: height,
+                  child: Center(
+                    child: SizedBox(
+                      width: size,
+                      height: size,
+                      child: const Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: const ProgressRing(),
+                      ),
+                    ),
+                  ),
+                ),
+      progressIndicatorBuilder: widget.placeWidget == null
+          ? (context, url, progress) => Container(
+              height: height,
+              child: Center(
+                child: SizedBox(
+                  width: size,
+                  height: size,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ProgressRing(value: progress.progress),
+                  ),
+                ),
+              ),
+            )
+          : null,
       imageBuilder: (context, imageProvider) {
         _releaseSlot();
         return Image(
@@ -311,6 +343,9 @@ class _PixivImageState extends State<PixivImage> {
                 ),
               ],
             ),
+          ),
+        );
+      },
           ),
         );
       },
