@@ -219,6 +219,7 @@ class PixEzNavigator extends StatefulWidget {
   final int initIndex;
   final int temporaryIndex;
   final Route<dynamic>? Function(RouteSettings)? onGenerateRoute;
+  static GlobalKey<PixEzNavigatorState>? _first;
 
   PixEzNavigator({
     super.key,
@@ -226,7 +227,10 @@ class PixEzNavigator extends StatefulWidget {
     required this.temporaryIndex,
     required this.onUpdate,
     this.onGenerateRoute,
-  }) {}
+  }) {
+    if (key is GlobalKey<PixEzNavigatorState>)
+      _first ??= key as GlobalKey<PixEzNavigatorState>;
+  }
 
   @override
   PixEzNavigatorState createState() => PixEzNavigatorState();
@@ -244,6 +248,8 @@ class PixEzNavigator extends StatefulWidget {
         ? context.findRootAncestorStateOfType<PixEzNavigatorState>() ??
               navigator
         : navigator ?? context.findAncestorStateOfType<PixEzNavigatorState>();
+
+    navigator ??= _first?.currentState;
 
     assert(() {
       if (navigator == null) {

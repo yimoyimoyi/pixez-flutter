@@ -172,8 +172,8 @@ class PrevNovel {
   int id;
   bool viewable;
   String contentOrder;
-  String title;
-  String coverUrl;
+  String? title;
+  String? coverUrl;
 
   PrevNovel({
     required this.id,

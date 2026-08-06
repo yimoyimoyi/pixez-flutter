@@ -1,37 +1,69 @@
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JObject};
-#[cfg(target_os = "android")]
-use jni::sys::jboolean;
-#[cfg(target_os = "android")]
-use jni::JNIEnv;
-#[cfg(target_os = "android")]
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(target_os = "android")]
-static ANDROID_PLATFORM_VERIFIER_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
 #[flutter_rust_bridge::frb(init)]
 pub fn init_app() {
-    // Default utilities - feel free to customize
-    flutter_rust_bridge::setup_default_user_utils();
+    flutter_rust_bridge::setup_log_to_console(if cfg!(debug_assertions) {
+        log::LevelFilter::Trace
+    } else {
+        log::LevelFilter::Warn
+    });
+    flutter_rust_bridge::setup_backtrace();
 }
 
+// Initializes and deinitializes the rustls-platform-verifier
+// on Android.
 #[cfg(target_os = "android")]
-#[export_name = "Java_com_flutter_1rust_1bridge_rhttp_RhttpPlugin_nativeInitPlatformVerifier"]
-pub extern "system" fn native_init_platform_verifier(
-    mut env: JNIEnv,
-    _class: JClass,
-    context: JObject,
-) -> jboolean {
-    if ANDROID_PLATFORM_VERIFIER_INITIALIZED.load(Ordering::Acquire) {
-        return 1;
+mod init_android_context {
+    use std::{
+        os::raw::c_void,
+        sync::{Arc, OnceLock},
+    };
+
+    use jni::{
+        jni_mangle,
+        objects::{JClass, JObject},
+        refs::Global,
+        EnvUnowned,
+    };
+
+    static CTX: OnceLock<Arc<Global<JObject>>> = OnceLock::new();
+
+    #[jni_mangle("com.flutter_rust_bridge.rhttp.RhttpPlugin")]
+    pub extern "system" fn init_android<'caller>(
+        mut unowned_env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        context: JObject<'caller>,
+    ) {
+        unowned_env
+            .with_env(|env| {
+                let jvm = env.get_java_vm().expect("Failed to get Java VM.");
+                let jvm_pointer = jvm.get_raw() as *mut c_void;
+
+                let global_ref = if let Some(reference) = CTX.get() {
+                    reference.clone()
+                } else {
+                    Arc::new(env.new_global_ref(&context)?)
+                };
+
+                let _ = CTX.get_or_init(|| global_ref.clone());
+
+                unsafe {
+                    ndk_context::initialize_android_context(
+                        jvm_pointer,
+                        global_ref.as_obj().as_raw() as _,
+                    );
+                }
+
+                rustls_platform_verifier::android::init_with_env(env, context)?;
+
+                Ok::<(), jni::errors::Error>(())
+            })
+            .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
     }
 
-    match rustls_platform_verifier::android::init_with_env(&mut env, context) {
-        Ok(()) => {
-            ANDROID_PLATFORM_VERIFIER_INITIALIZED.store(true, Ordering::Release);
-            1
-        }
-        Err(_) => 0,
+    #[jni_mangle("com.flutter_rust_bridge.rhttp.RhttpPlugin")]
+    pub unsafe extern "system" fn deinit_android<'caller>(
+        mut _unowned_env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+    ) {
+        ndk_context::release_android_context();
     }
 }

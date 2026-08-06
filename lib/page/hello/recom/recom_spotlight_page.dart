@@ -129,10 +129,9 @@ class _RecomSpolightPageState extends State<RecomSpolightPage>
         controller: _scrollController,
         physics: physics,
         slivers: [
-          if (!userSetting.isBangs)
-            SliverToBoxAdapter(
-              child: Container(height: MediaQuery.of(context).padding.top),
-            ),
+          SliverToBoxAdapter(
+            child: Container(height: MediaQuery.of(context).padding.top),
+          ),
           SliverToBoxAdapter(
             child: _buildFirstRow(context),
           ),

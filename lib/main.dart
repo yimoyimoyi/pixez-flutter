@@ -155,6 +155,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       const SystemUiOverlayStyle(
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarDividerColor: Colors.transparent,
+        systemNavigationBarContrastEnforced: false,
         statusBarColor: Colors.transparent,
       ),
     );
@@ -200,9 +201,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     value: SystemUiOverlayStyle(
                       systemNavigationBarColor: Colors.transparent,
                       systemNavigationBarDividerColor: Colors.transparent,
+                      systemNavigationBarContrastEnforced: false,
                       statusBarColor: Colors.transparent,
-                      systemNavigationBarContrastEnforced: true,
-                      systemStatusBarContrastEnforced: true,
                       systemNavigationBarIconBrightness: brightness ==
                               Brightness.dark
                           ? Brightness.light

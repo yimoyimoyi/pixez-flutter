@@ -357,6 +357,7 @@ async fn make_http_request_helper(
             None => RequestClient::new_default(),
         },
     };
+
     let parsed_url = Url::parse(&url).map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
     let effective_client = client.client_for_url(&parsed_url).await?;
 

@@ -9,9 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `create_client`, `new_default`, `new`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DynamicDnsSettings`, `DynamicResolver`, `StaticResolver`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `resolve`, `resolve`
+// These functions are ignored because they are not marked as `pub`: `apply_dns_settings`, `apply_reqwest_tls_settings`, `build_ech_tls_config`, `build_reqwest_client`, `build_root_store`, `client_for_url`, `collect_pem_certificates`, `collect_root_cert_ders`, `create_client`, `extract_https_svc_param`, `lookup_alidns_https_ech`, `lookup_ech_config`, `new_default`, `new`, `new`, `parse_alidns_https_ech_response`, `parse_private_key`, `should_try_ech`, `webpki_root_certs`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClientRuntime`, `DynamicDnsSettings`, `DynamicResolver`, `EchClientCacheEntry`, `EchLookupResult`, `EchTransport`, `NoVerifier`, `ParsedAliDnsHttpsEch`, `StaticResolver`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `resolve`, `resolve`, `supported_verify_schemes`, `verify_server_cert`, `verify_tls12_signature`, `verify_tls13_signature`
 
 DnsSettings createStaticResolverSync({required StaticDnsSettings settings}) =>
     RustLib.instance.api.crateApiClientCreateStaticResolverSync(
@@ -178,6 +178,12 @@ sealed class RedirectSettings with _$RedirectSettings {
   ) = RedirectSettings_LimitedRedirects;
 }
 
+enum RootCertSource {
+  platform,
+  webpki,
+  none,
+}
+
 class StaticDnsSettings {
   final Map<String, List<String>> overrides;
   final String? fallback;
@@ -231,7 +237,7 @@ class TimeoutSettings {
 }
 
 class TlsSettings {
-  final bool trustRootCertificates;
+  final RootCertSource rootCertSource;
   final List<Uint8List> trustedRootCertificates;
   final bool verifyCertificates;
   final ClientCertificate? clientCertificate;
@@ -240,7 +246,7 @@ class TlsSettings {
   final bool sni;
 
   const TlsSettings({
-    required this.trustRootCertificates,
+    required this.rootCertSource,
     required this.trustedRootCertificates,
     required this.verifyCertificates,
     this.clientCertificate,
@@ -251,7 +257,7 @@ class TlsSettings {
 
   @override
   int get hashCode =>
-      trustRootCertificates.hashCode ^
+      rootCertSource.hashCode ^
       trustedRootCertificates.hashCode ^
       verifyCertificates.hashCode ^
       clientCertificate.hashCode ^
@@ -264,7 +270,7 @@ class TlsSettings {
       identical(this, other) ||
       other is TlsSettings &&
           runtimeType == other.runtimeType &&
-          trustRootCertificates == other.trustRootCertificates &&
+          rootCertSource == other.rootCertSource &&
           trustedRootCertificates == other.trustedRootCertificates &&
           verifyCertificates == other.verifyCertificates &&
           clientCertificate == other.clientCertificate &&

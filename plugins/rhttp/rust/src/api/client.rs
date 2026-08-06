@@ -22,9 +22,8 @@ use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::RwLock;
 pub use tokio_util::sync::CancellationToken;
 
-const ALIDNS_RESOLVE_ENDPOINT: &str = "https://dns.alidns.com/resolve";
-const APP_API_PIXIV_NET_HOST: &str = "app-api.pixiv.net";
-const APP_API_PIXIV_NET_ECH_BOOTSTRAP_HOST: &str = "cloudflare-ech.com";
+const ALIDNS_RESOLVE_ENDPOINT: &str = "https://223.5.5.5/resolve";
+const ECH_BOOTSTRAP_HOST: &str = "cloudflare-ech.com";
 
 #[derive(Clone)]
 pub struct ClientSettings {
@@ -81,13 +80,20 @@ pub struct TimeoutSettings {
 
 #[derive(Clone)]
 pub struct TlsSettings {
-    pub trust_root_certificates: bool,
+    pub root_cert_source: RootCertSource,
     pub trusted_root_certificates: Vec<Vec<u8>>,
     pub verify_certificates: bool,
     pub client_certificate: Option<ClientCertificate>,
     pub min_tls_version: Option<TlsVersion>,
     pub max_tls_version: Option<TlsVersion>,
     pub sni: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum RootCertSource {
+    Platform,
+    Webpki,
+    None,
 }
 
 #[derive(Clone)]
@@ -182,6 +188,9 @@ impl RequestClient {
         create_client(settings)
     }
 
+    /// Returns the reqwest client to use for the given URL. When ECH is enabled
+    /// and applicable, this resolves (and caches per-host) an ECH-configured
+    /// client; otherwise the base client is returned.
     pub(crate) async fn client_for_url(&self, url: &Url) -> Result<reqwest::Client, RhttpError> {
         if !self.should_try_ech(url) {
             return Ok(self.client.clone());
@@ -232,17 +241,13 @@ impl RequestClient {
             }
         };
 
-        self.runtime
-            .ech_clients
-            .write()
-            .await
-            .insert(
-                host,
-                EchClientCacheEntry {
-                    client: ech_client.clone(),
-                    expires_at: Instant::now() + ech_lookup.ttl,
-                },
-            );
+        self.runtime.ech_clients.write().await.insert(
+            host,
+            EchClientCacheEntry {
+                client: ech_client.clone(),
+                expires_at: Instant::now() + ech_lookup.ttl,
+            },
+        );
 
         Ok(ech_client.unwrap_or_else(|| self.client.clone()))
     }
@@ -259,10 +264,6 @@ impl RequestClient {
         let Some(host) = url.host_str() else {
             return false;
         };
-
-        if !host.eq_ignore_ascii_case(APP_API_PIXIV_NET_HOST) {
-            return false;
-        }
 
         if host.parse::<IpAddr>().is_ok() {
             return false;
@@ -406,10 +407,12 @@ fn apply_reqwest_tls_settings(
     tls_settings: Option<&TlsSettings>,
 ) -> Result<reqwest::ClientBuilder, RhttpError> {
     let Some(tls_settings) = tls_settings else {
-        return Ok(client);
+        // No TLS settings supplied: respect the default root cert source (Webpki).
+        return Ok(client.tls_certs_only(webpki_root_certs()?));
     };
 
-    let root_certificates = tls_settings
+    // Caller-supplied custom roots (PEM), always layered on top.
+    let custom_certs = tls_settings
         .trusted_root_certificates
         .iter()
         .map(|cert| {
@@ -417,12 +420,23 @@ fn apply_reqwest_tls_settings(
                 RhttpError::RhttpUnknownError(format!("Error adding trusted certificate: {e:?}"))
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<Certificate>, RhttpError>>()?;
 
-    if !tls_settings.trust_root_certificates {
-        client = client.tls_certs_only(root_certificates);
-    } else if !root_certificates.is_empty() {
-        client = client.tls_certs_merge(root_certificates);
+    match tls_settings.root_cert_source {
+        RootCertSource::Platform => {
+            // Add custom certs if not empty, otherwise keep platform verifier as is.
+            if !custom_certs.is_empty() {
+                client = client.tls_certs_merge(custom_certs);
+            }
+        }
+        RootCertSource::Webpki => {
+            let mut certs = custom_certs;
+            certs.extend(webpki_root_certs()?);
+            client = client.tls_certs_only(certs);
+        }
+        RootCertSource::None => {
+            client = client.tls_certs_only(custom_certs);
+        }
     }
 
     if tls_settings.verify_certificates {
@@ -501,11 +515,19 @@ fn build_ech_tls_config(
         Some(tls_settings) if !tls_settings.verify_certificates => config_builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier)),
-        Some(tls_settings) if !tls_settings.trust_root_certificates => config_builder
-            .with_root_certificates(build_root_store(&tls_settings.trusted_root_certificates)?),
+        Some(tls_settings) if matches!(tls_settings.root_cert_source, RootCertSource::None) => {
+            config_builder
+                .with_root_certificates(build_root_store(false, &tls_settings.trusted_root_certificates)?)
+        }
+        Some(tls_settings) if matches!(tls_settings.root_cert_source, RootCertSource::Webpki) => {
+            config_builder.with_root_certificates(build_root_store(
+                true,
+                &tls_settings.trusted_root_certificates,
+            )?)
+        }
         Some(tls_settings)
-            if !tls_settings.trusted_root_certificates.is_empty()
-                && tls_settings.trust_root_certificates =>
+            if matches!(tls_settings.root_cert_source, RootCertSource::Platform)
+                && !tls_settings.trusted_root_certificates.is_empty() =>
         {
             #[cfg(any(all(unix, not(target_os = "android")), target_os = "windows"))]
             {
@@ -602,7 +624,6 @@ fn apply_dns_settings(
 
                 client = client.resolve_to_addrs(hostname, resolved_ips.as_slice());
             }
-
         }
         Some(DnsSettings::DynamicDns(settings)) => {
             client = client.dns_resolver(Arc::new(DynamicResolver {
@@ -613,6 +634,18 @@ fn apply_dns_settings(
     }
 
     Ok(client)
+}
+
+/// The webpki (Mozilla) root certificates bundled with the crate.
+fn webpki_root_certs() -> Result<Vec<Certificate>, RhttpError> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|der| {
+            Certificate::from_der(der.as_ref()).map_err(|e| {
+                RhttpError::RhttpUnknownError(format!("Error adding webpki root: {e:?}"))
+            })
+        })
+        .collect()
 }
 
 fn collect_pem_certificates(
@@ -645,8 +678,22 @@ fn collect_root_cert_ders(
     Ok(certificates)
 }
 
-fn build_root_store(trusted_root_certificates: &[Vec<u8>]) -> Result<RootCertStore, RhttpError> {
+/// Builds a [`RootCertStore`], optionally seeded with the bundled webpki roots,
+/// then augmented with the caller-supplied PEM roots.
+fn build_root_store(
+    include_webpki: bool,
+    trusted_root_certificates: &[Vec<u8>],
+) -> Result<RootCertStore, RhttpError> {
     let mut root_store = RootCertStore::empty();
+
+    if include_webpki {
+        for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
+            root_store
+                .add(cert.clone())
+                .map_err(|e| RhttpError::RhttpUnknownError(format!("{e:?}")))?;
+        }
+    }
+
     for cert in collect_root_cert_ders(trusted_root_certificates)? {
         root_store
             .add(cert)
@@ -716,6 +763,11 @@ impl EchTransport {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
+            // Use the bundled Mozilla (webpki) roots instead of the platform
+            // verifier. AliDNS is signed by a public CA in that bundle, and this
+            // avoids depending on the Android JNI platform-verifier init, which
+            // is why the bootstrap query failed on Android but not iOS.
+            .tls_certs_only(webpki_root_certs()?)
             .build()
             .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
 
@@ -725,20 +777,13 @@ impl EchTransport {
         })
     }
 
-    async fn lookup_ech_config(&self, host: &str) -> Result<EchLookupResult, RhttpError> {
-        if host.eq_ignore_ascii_case(APP_API_PIXIV_NET_HOST) {
-            let parsed = self
-                .lookup_alidns_https_ech(APP_API_PIXIV_NET_ECH_BOOTSTRAP_HOST)
-                .await?;
-            return Ok(EchLookupResult {
-                ech_config: Some(parsed.ech),
-                ttl: parsed.ttl,
-            });
-        }
-
+    async fn lookup_ech_config(&self, _host: &str) -> Result<EchLookupResult, RhttpError> {
+        // pixiv's ECH front is served via cloudflare-ech.com; resolve the ECH
+        // config from that bootstrap host regardless of the requested host.
+        let parsed = self.lookup_alidns_https_ech(ECH_BOOTSTRAP_HOST).await?;
         Ok(EchLookupResult {
-            ech_config: None,
-            ttl: StdDuration::from_secs(0),
+            ech_config: Some(parsed.ech),
+            ttl: parsed.ttl,
         })
     }
 
@@ -751,7 +796,10 @@ impl EchTransport {
             .send()
             .await
             .map_err(|e| {
-                RhttpError::RhttpUnknownError(format!("AliDNS ECH request failed: {e}"))
+                RhttpError::RhttpUnknownError(format!(
+                    "AliDNS ECH request failed: {}",
+                    full_error_chain(&e)
+                ))
             })?;
 
         let status = response.status();
@@ -767,6 +815,16 @@ impl EchTransport {
 
         parse_alidns_https_ech_response(body.as_ref())
     }
+}
+
+fn full_error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(inner) = source {
+        parts.push(inner.to_string());
+        source = inner.source();
+    }
+    parts.join(" -> ")
 }
 
 fn parse_alidns_https_ech_response(body: &[u8]) -> Result<ParsedAliDnsHttpsEch, RhttpError> {
@@ -805,9 +863,7 @@ fn parse_alidns_https_ech_response(body: &[u8]) -> Result<ParsedAliDnsHttpsEch, 
 
         let ech = base64::engine::general_purpose::STANDARD
             .decode(encoded_ech)
-            .map_err(|e| {
-                RhttpError::RhttpUnknownError(format!("Invalid AliDNS ECH base64: {e}"))
-            })?;
+            .map_err(|e| RhttpError::RhttpUnknownError(format!("Invalid AliDNS ECH base64: {e}")))?;
         return Ok(ParsedAliDnsHttpsEch {
             ech,
             ttl: StdDuration::from_secs(ttl),
