@@ -29,23 +29,15 @@ class _PictureListPageState extends State<PictureListPage> {
   late LightingStore? _lightingStore;
   late List<IllustStore> _iStores;
   late IllustStore _store;
-  double screenWidth = 0;
 
-  // 方向追踪
-  Offset? _pointerDownPos;
+  // 滑动状态（自定义跟手 + 判定）
   double _totalDx = 0;
-  double _totalDy = 0;
-  bool _pointerIsDown = false;
   int _dragStartPage = 0;
+  double _dragStartOffset = 0;
   bool _evaluating = false;
-  Duration _gestureDuration = Duration.zero;
-  Duration _pointerDownTimeStamp = Duration.zero;
-  // 手势代际 token：防止迟到的延迟回调误判（快速连续手势）
+  // 手势代际 token：防止旧手势的动画回调误判（快速连续手势）
   int _gestureToken = 0;
-  // 瞬时释放速度（最后一段 move 的间隔速度，比全程平均更接近真实甩动）
-  double _releaseVelocityDx = 0;
-  double? _lastMoveDx;
-  Duration? _lastMoveTimeStamp;
+  double _pageWidth = 1;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -66,107 +58,91 @@ class _PictureListPageState extends State<PictureListPage> {
     super.dispose();
   }
 
-  void _onPointerDown(PointerDownEvent e) {
-    _pointerDownPos = e.position;
+  void _onDragStart(DragStartDetails d) {
     _totalDx = 0;
-    _totalDy = 0;
-    _pointerIsDown = true;
     _dragStartPage = nowPosition;
-    _gestureDuration = Duration.zero;
-    _pointerDownTimeStamp = e.timeStamp;
-    _releaseVelocityDx = 0;
-    _lastMoveDx = null;
-    _lastMoveTimeStamp = null;
+    _dragStartOffset = _pageController.page ?? nowPosition.toDouble();
     _gestureToken++;
-    // 新手势开始时，取消正在进行的切换动画
+    // 新手势开始时，取消进行中的切换/回弹动画
     if (_evaluating) {
       _evaluating = false;
-      _pageController.jumpTo(_pageController.page ?? nowPosition.toDouble());
+      _pageController.jumpTo(_pageController.page ?? _dragStartOffset);
     }
   }
 
-  void _onPointerMove(PointerMoveEvent e) {
-    if (!_pointerIsDown || _pointerDownPos == null) return;
-    final now = e.timeStamp;
-    if (_lastMoveTimeStamp != null && _lastMoveDx != null) {
-      final dtMs = (now - _lastMoveTimeStamp!).inMilliseconds;
-      if (dtMs > 0) {
-        _releaseVelocityDx = (e.position.dx - _lastMoveDx!) * 1000 / dtMs;
-      }
-    }
-    _lastMoveDx = e.position.dx;
-    _lastMoveTimeStamp = now;
-    _totalDx = e.position.dx - _pointerDownPos!.dx;
-    _totalDy = e.position.dy - _pointerDownPos!.dy;
+  void _onDragUpdate(DragUpdateDetails d) {
+    _totalDx += d.delta.dx;
+    // 跟手：图片随手指 1:1 平移。
+    // 注意：jumpTo 的单位是像素（ScrollController 语义），
+    // 而 _dragStartOffset 是页单位，需换算：像素 = 页 × 视口宽
+    _pageController.jumpTo(_dragStartOffset * _pageWidth - _totalDx);
   }
 
-  void _onPointerUp(PointerUpEvent e) {
-    _pointerIsDown = false;
-    _gestureDuration = e.timeStamp - _pointerDownTimeStamp;
-    final token = ++_gestureToken;
-    // 手势已结束（无原生动画竞争，physics 恒为 NeverScrollable），
-    // 短延迟让 pointer 事件流处理完毕即可判定
-    Future.delayed(const Duration(milliseconds: 80), () {
-      if (mounted && token == _gestureToken) _evaluateSwipe();
-    });
-  }
-
-  void _onPointerCancel(PointerCancelEvent e) {
-    // 系统手势接管（通知栏/来电等）：重置状态并使挂起的判定失效
-    _pointerIsDown = false;
-    _gestureToken++;
-  }
-
-  void _evaluateSwipe() {
-    if (_evaluating) return;
-    // 空列表保护：clamp(0, -1) 会抛 ArgumentError
+  void _onDragEnd(DragEndDetails d) {
     if (_iStores.isEmpty) return;
-    // 使用实际手势耗时计算速度（至少 50ms 防止除零）
-    final durationMs = _gestureDuration.inMilliseconds.clamp(50, 2000);
-    final durationSec = durationMs / 1000.0;
-    final avgVelocityDx = _totalDx / durationSec;
-
-    // 使用统一的滑动判定器（释放速度优先，平均速度兜底）
+    final v = d.velocity.pixelsPerSecond;
+    // 水平手势的垂直分量已被手势竞技场裁决为不主导，dy 传 0
     final result = _swipeEvaluator.evaluate(
       totalDx: _totalDx,
-      totalDy: _totalDy,
-      velocityDx: _releaseVelocityDx.abs() > 0 ? _releaseVelocityDx : avgVelocityDx,
-      velocityDy: _totalDy / durationSec,
-      screenWidth: screenWidth * 2,
+      totalDy: 0,
+      velocityDx: v.dx,
+      velocityDy: v.dy,
+      screenWidth: _pageWidth,
     );
 
-    if (!result.accepted) return; // 拒绝：不做任何动画（无原生 fling 竞争）
+    int target = _dragStartPage;
+    if (result.accepted) {
+      target = result.direction == SwipeDirection.left
+          ? _dragStartPage + 1
+          : _dragStartPage - 1;
+    }
+    // clamp 到合法范围（上限含"加载更多"页）；拒绝/越界回弹当前页
+    target = target.clamp(0, _iStores.length);
+    _animateTo(target);
+  }
 
-    final target = _totalDx < 0 ? _dragStartPage + 1 : _dragStartPage - 1;
-    // 上限为 _iStores.length：最后一页后可滑到"加载更多"页（PictureListNextPage）
-    final clamped = target.clamp(0, _iStores.length);
-    if (clamped == _dragStartPage) return;
+  void _onDragCancel() {
+    // 系统手势接管（通知栏/来电等）：回弹原页
+    _animateTo(_dragStartPage);
+  }
 
+  /// 平滑切换到目标页（接受→前进/后退，拒绝→回弹）
+  void _animateTo(int target) {
+    if (_evaluating) return;
+    final token = _gestureToken;
     _evaluating = true;
     _pageController
-        .animateToPage(clamped,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut)
+        .animateToPage(target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic)
         .then((_) {
       _evaluating = false;
-      if (mounted) setState(() => nowPosition = clamped);
+      // 旧手势的动画回调不更新状态（新手势已开始）
+      if (mounted && token == _gestureToken) {
+        setState(() => nowPosition = target);
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    screenWidth = MediaQuery.of(context).size.width / 2;
+    _pageWidth = MediaQuery.of(context).size.width;
     return Observer(builder: (_) {
-      return Listener(
-        onPointerDown: _onPointerDown,
-        onPointerMove: _onPointerMove,
-        onPointerUp: _onPointerUp,
-        onPointerCancel: _onPointerCancel,
+      // 自定义跟手滑动：拖动时图片随手指平移（jumpTo），
+      // 松手后判定（速度优先/位移兜底）→ 平滑切换或回弹。
+      // 手势竞技场自动裁决水平 vs 内层纵向滚动，斜向拖拽不会误触发
+      return GestureDetector(
+        onHorizontalDragStart: _onDragStart,
+        onHorizontalDragUpdate: _onDragUpdate,
+        onHorizontalDragEnd: _onDragEnd,
+        onHorizontalDragCancel: _onDragCancel,
         child: PageView.builder(
           controller: _pageController,
-          // 恒为 NeverScrollable：翻页完全由自定义判定驱动，
-          // 避免原生 snap/fling 动画与 300ms 后判定互相竞争（翻过去又弹回）
+          // 恒为 NeverScrollable：跟手与判定完全由本组件驱动
           physics: const NeverScrollableScrollPhysics(),
+          // 预构建并保留相邻页：慢速滑动到页面边界时页面反复进出视口
+          // 销毁重建，导致图片异步加载闪烁抖动
+          allowImplicitScrolling: true,
           itemBuilder: (BuildContext context, int index) {
             if (index == _iStores.length && _lightingStore != null) {
               return PictureListNextPage(

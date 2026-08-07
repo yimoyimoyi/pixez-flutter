@@ -276,30 +276,35 @@ class _PixivImageState extends State<PixivImage> {
       placeholder: widget.placeWidget == null
           ? null
           : (context, url) =>
+                // 加载超过 200ms 才显示进度环，避免快速加载（缓存命中）时的闪烁
                 widget.placeWidget ??
-                Container(
-                  height: height,
-                  child: Center(
-                    child: SizedBox(
-                      width: size,
-                      height: size,
-                      child: const Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: const ProgressRing(),
+                _DelayedIndicator(
+                  child: Container(
+                    height: height,
+                    child: Center(
+                      child: SizedBox(
+                        width: size,
+                        height: size,
+                        child: const Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: const ProgressRing(),
+                        ),
                       ),
                     ),
                   ),
                 ),
       progressIndicatorBuilder: widget.placeWidget == null
-          ? (context, url, progress) => Container(
-              height: height,
-              child: Center(
-                child: SizedBox(
-                  width: size,
-                  height: size,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: ProgressRing(value: progress.progress),
+          ? (context, url, progress) => _DelayedIndicator(
+              child: Container(
+                height: height,
+                child: Center(
+                  child: SizedBox(
+                    width: size,
+                    height: size,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: ProgressRing(value: progress.progress),
+                    ),
                   ),
                 ),
               ),
@@ -371,6 +376,45 @@ class PixivProvider {
       headers: Hoster.header(url: preUrl),
       cacheManager: pixivCacheManager,
     );
+  }
+}
+
+/// 延迟显示加载指示器：加载在 [delay] 内完成则不显示（组件被替换后
+/// 计时器回调不再生效），避免缓存命中/快速加载时的进度环闪烁
+class _DelayedIndicator extends StatefulWidget {
+  final Widget child;
+  final Duration delay;
+
+  const _DelayedIndicator({
+    required this.child,
+    this.delay = const Duration(milliseconds: 200),
+  });
+
+  @override
+  State<_DelayedIndicator> createState() => _DelayedIndicatorState();
+}
+
+class _DelayedIndicatorState extends State<_DelayedIndicator> {
+  bool _visible = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(widget.delay, () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _visible ? widget.child : const SizedBox.shrink();
   }
 }
 

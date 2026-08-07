@@ -29,11 +29,15 @@ class _PictureListPageState extends State<PictureListPage> {
   late LightingStore? _lightingStore;
   late List<IllustStore> _iStores;
   late IllustStore _store;
-  double screenWidth = 0;
 
-  // 累积拖拽位移
+  // 滑动状态（自定义跟手 + 判定）
   double _dragTotalDx = 0;
-  double _dragTotalDy = 0;
+  int _dragStartPage = 0;
+  double _dragStartOffset = 0;
+  bool _evaluating = false;
+  // 手势代际 token：防止旧手势的动画回调误判（快速连续手势）
+  int _gestureToken = 0;
+  double _pageWidth = 1;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -48,6 +52,24 @@ class _PictureListPageState extends State<PictureListPage> {
     super.initState();
   }
 
+  /// 平滑切换到目标页（接受→前进/后退，拒绝→回弹）
+  void _animateTo(int target) {
+    if (_evaluating) return;
+    final token = _gestureToken;
+    _evaluating = true;
+    _pageController
+        .animateToPage(target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic)
+        .then((_) {
+      _evaluating = false;
+      // 旧手势的动画回调不更新状态（新手势已开始）
+      if (mounted && token == _gestureToken) {
+        setState(() => nowPosition = target);
+      }
+    });
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -58,13 +80,16 @@ class _PictureListPageState extends State<PictureListPage> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        screenWidth = constraints.maxWidth / 2;
+        _pageWidth = constraints.maxWidth;
         return Stack(
           children: [
             Observer(builder: (_) {
               return PageView.builder(
                 controller: _pageController,
                 physics: const NeverScrollableScrollPhysics(),
+                // 预构建并保留相邻页：避免滑动到页面边界时页面反复
+                // 销毁重建导致图片加载闪烁抖动
+                allowImplicitScrolling: true,
                 itemBuilder: (BuildContext context, int index) {
                   if (index == _iStores.length && _lightingStore != null) {
                     return PictureListNextPage(
@@ -87,47 +112,50 @@ class _PictureListPageState extends State<PictureListPage> {
               child: GestureDetector(
                 onHorizontalDragStart: (_) {
                   _dragTotalDx = 0;
-                  _dragTotalDy = 0;
+                  _dragStartPage = nowPosition;
+                  _dragStartOffset =
+                      _pageController.page ?? nowPosition.toDouble();
+                  _gestureToken++;
+                  // 新手势开始时，取消进行中的切换/回弹动画
+                  if (_evaluating) {
+                    _evaluating = false;
+                    _pageController
+                        .jumpTo(_pageController.page ?? _dragStartOffset);
+                  }
                 },
                 onHorizontalDragUpdate: (details) {
                   _dragTotalDx += details.delta.dx;
-                  _dragTotalDy += details.delta.dy;
+                  // 跟手：jumpTo 以像素为单位，页偏移需换算（页 × 视口宽）
+                  _pageController.jumpTo(
+                      _dragStartOffset * _pageWidth - _dragTotalDx);
                 },
                 onHorizontalDragCancel: () {
-                  // 手势被纵向滚动打断等场景：重置累计位移
-                  _dragTotalDx = 0;
-                  _dragTotalDy = 0;
+                  // 手势被系统打断：回弹原页
+                  _animateTo(_dragStartPage);
                 },
                 onHorizontalDragEnd: (details) {
                   // 空列表保护：clamp(0, -1) 会抛 ArgumentError
                   if (_iStores.isEmpty) return;
                   final v = details.velocity.pixelsPerSecond;
 
-                  // 使用统一的滑动判定器
+                  // 使用统一的滑动判定器（水平手势的垂直分量已被竞技场裁决）
                   final result = _swipeEvaluator.evaluate(
                     totalDx: _dragTotalDx,
-                    totalDy: _dragTotalDy,
+                    totalDy: 0,
                     velocityDx: v.dx,
                     velocityDy: v.dy,
-                    screenWidth: screenWidth * 2,
+                    screenWidth: _pageWidth,
                   );
 
-                  if (!result.accepted) return;
-
-                  int targetPage = nowPosition;
-                  if (result.direction == SwipeDirection.left) {
-                    targetPage++;
-                  } else if (result.direction == SwipeDirection.right) {
-                    targetPage--;
+                  int target = _dragStartPage;
+                  if (result.accepted) {
+                    target = result.direction == SwipeDirection.left
+                        ? _dragStartPage + 1
+                        : _dragStartPage - 1;
                   }
-                  targetPage = targetPage.clamp(0, _iStores.length - 1);
-
-                  if (targetPage != nowPosition) {
-                    _pageController.animateToPage(targetPage,
-                        duration: const Duration(milliseconds: 150),
-                        curve: Curves.easeInOut);
-                    setState(() => nowPosition = targetPage);
-                  }
+                  // clamp 到合法范围（上限含"加载更多"页）；拒绝/越界回弹
+                  target = target.clamp(0, _iStores.length);
+                  _animateTo(target);
                 },
               ),
             ),
