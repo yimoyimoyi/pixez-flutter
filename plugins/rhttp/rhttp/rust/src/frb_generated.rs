@@ -578,8 +578,16 @@ fn decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRu
             _ => unreachable!(),
         };
         deserializer.end();
-        let ans = ans.expect("Dart throws exception but Rust side assume it is not failable");
-        ans
+        // 本地修复：Dart 回调抛异常（如断网时 DNS 解析失败抛 SocketException）
+        // 不再 panic——Android 上 Rust panic 默认 abort 导致 app 闪退。
+        // 优雅降级：返回默认值（空 IP 列表 / 空操作），错误转为正常请求失败。
+        match ans {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(e) => {
+                eprintln!("Dart callback error (graceful fallback): {e}");
+                Default::default()
+            }
+        }
     }
 
     move |arg0: CancellationToken| {
@@ -610,8 +618,16 @@ fn decode_DartFn_Inputs_String_Output_list_String_AnyhowException(
             _ => unreachable!(),
         };
         deserializer.end();
-        let ans = ans.expect("Dart throws exception but Rust side assume it is not failable");
-        ans
+        // 本地修复：Dart 回调抛异常（如断网时 DNS 解析失败抛 SocketException）
+        // 不再 panic——Android 上 Rust panic 默认 abort 导致 app 闪退。
+        // 优雅降级：返回默认值（空 IP 列表 / 空操作），错误转为正常请求失败。
+        match ans {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(e) => {
+                eprintln!("Dart callback error (graceful fallback): {e}");
+                Default::default()
+            }
+        }
     }
 
     move |arg0: String| {
@@ -645,8 +661,16 @@ fn decode_DartFn_Inputs_http_response_Output_unit_AnyhowException(
             _ => unreachable!(),
         };
         deserializer.end();
-        let ans = ans.expect("Dart throws exception but Rust side assume it is not failable");
-        ans
+        // 本地修复：Dart 回调抛异常（如断网时 DNS 解析失败抛 SocketException）
+        // 不再 panic——Android 上 Rust panic 默认 abort 导致 app 闪退。
+        // 优雅降级：返回默认值（空 IP 列表 / 空操作），错误转为正常请求失败。
+        match ans {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(e) => {
+                eprintln!("Dart callback error (graceful fallback): {e}");
+                Default::default()
+            }
+        }
     }
 
     move |arg0: crate::api::http::HttpResponse| {
@@ -680,8 +704,16 @@ fn decode_DartFn_Inputs_rhttp_error_Output_unit_AnyhowException(
             _ => unreachable!(),
         };
         deserializer.end();
-        let ans = ans.expect("Dart throws exception but Rust side assume it is not failable");
-        ans
+        // 本地修复：Dart 回调抛异常（如断网时 DNS 解析失败抛 SocketException）
+        // 不再 panic——Android 上 Rust panic 默认 abort 导致 app 闪退。
+        // 优雅降级：返回默认值（空 IP 列表 / 空操作），错误转为正常请求失败。
+        match ans {
+            std::result::Result::Ok(v) => v,
+            std::result::Result::Err(e) => {
+                eprintln!("Dart callback error (graceful fallback): {e}");
+                Default::default()
+            }
+        }
     }
 
     move |arg0: crate::api::error::RhttpError| {
