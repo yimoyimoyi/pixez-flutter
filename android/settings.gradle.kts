@@ -26,7 +26,9 @@ pluginManagement {
 
     repositories {
         google()
-        mavenCentral()
+        // 国内网络下 mavenCentral() 被 TLS 阻断，改用阿里云镜像（public 含 central 全量）
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         gradlePluginPortal()
     }
 }
@@ -34,6 +36,9 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "8.13.0" apply false
+    // 声明 library 插件：部分插件（如 audio_session 0.2.4）的 build.gradle
+    // 用无版本号 id("com.android.library")，需在此解析到 AGP 版本
+    id("com.android.library") version "8.13.0" apply false
     id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 

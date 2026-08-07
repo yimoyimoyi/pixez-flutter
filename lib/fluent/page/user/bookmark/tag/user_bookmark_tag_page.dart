@@ -51,7 +51,6 @@ class _TagTabState extends State<_TagTab> {
     controlFinishRefresh: true,
   );
   late BookMarkTagStore _bookMarkTagStore;
-  String? _errorMessage;
 
   @override
   void initState() {
@@ -73,16 +72,15 @@ class _TagTabState extends State<_TagTab> {
   Widget build(BuildContext context) {
     return Observer(
       builder: (_) {
-        if (_errorMessage != null) {
+        if (_bookMarkTagStore.errorMessage != null) {
           return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(_errorMessage!),
+                Text(_bookMarkTagStore.errorMessage!),
                 const SizedBox(height: 12),
                 Button(
                   onPressed: () {
-                    setState(() => _errorMessage = null);
                     _bookMarkTagStore.fetch(widget.restrict);
                   },
                   child: Text(I18n.of(context).retry),
@@ -97,7 +95,6 @@ class _TagTabState extends State<_TagTab> {
           header: PixezDefault.header(context),
           footer: PixezDefault.footer(context),
           onRefresh: () async {
-            _errorMessage = null;
             await _bookMarkTagStore.fetch(widget.restrict);
           },
           onLoad: () async {

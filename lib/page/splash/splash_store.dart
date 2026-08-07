@@ -58,7 +58,10 @@ abstract class _SplashStoreBase with Store {
       await Hoster.dnsQueryAll();
     } catch (e) {}
     // 直接 DoH 失败时，尝试通过常见本地代理预热 DNS 缓存
-    if (Hoster.cachedIps('app-api.pixiv.net').isEmpty) {
+    // 注意用 hasDynamicCache 判断（cachedIps 会回退到常量池恒非空）
+    if (!Hoster.hasDynamicCache('app-api.pixiv.net')) {
+      // 总耗时预算 15s，防止 4 域名×4 DoH×5 代理串行时阻塞启动
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
       for (final proxy in const [
         ('127.0.0.1', 7897),
         ('127.0.0.1', 7890),
@@ -66,9 +69,11 @@ abstract class _SplashStoreBase with Store {
         ('127.0.0.1', 1080),
         ('127.0.0.1', 8080),
       ]) {
+        if (DateTime.now().isAfter(deadline)) break;
         try {
-          await Hoster.warmUpDns(proxy.$1, proxy.$2);
-          if (Hoster.cachedIps('app-api.pixiv.net').isNotEmpty) break;
+          await Hoster.warmUpDns(proxy.$1, proxy.$2)
+              .timeout(const Duration(seconds: 8));
+          if (Hoster.hasDynamicCache('app-api.pixiv.net')) break;
         } catch (_) {}
       }
     }

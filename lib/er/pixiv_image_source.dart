@@ -3,6 +3,7 @@ import 'package:pixez/network/network_mode.dart';
 
 class PixivImageSource {
   static const String imageHost = 'i.pximg.net';
+  static const String imageSHost = 's.pximg.net';
 
   /// 代理任意 Pixiv 域名 URL（登录、OAuth 等非图片请求）
   /// 当用户设置了自定义 pictureSource 时，将 Pixiv URL 改写为走代理

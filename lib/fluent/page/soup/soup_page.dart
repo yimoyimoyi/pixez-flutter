@@ -15,6 +15,7 @@
  */
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart' show Colors, SelectableText;
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/fluent/component/painter_avatar.dart';
@@ -45,11 +46,46 @@ class SoupPage extends StatefulWidget {
 
 class _SoupPageState extends State<SoupPage> {
   final SoupStore _soupStore = SoupStore();
+  bool _saving = false;
 
   @override
   void initState() {
     _soupStore.fetch(widget.url);
     super.initState();
+  }
+
+  @override
+  void dispose() {
+    // 释放原生 rhttp 客户端，避免句柄泄漏
+    _soupStore.close();
+    super.dispose();
+  }
+
+  /// 长按保存封面（防抖，按结果提示）
+  Future<void> _saveCover(BuildContext context) async {
+    if (_saving) return;
+    _saving = true;
+    try {
+      await saveStore.saveImageByUrl(
+        widget.spotlight!.thumbnail,
+        widget.spotlight!.pureTitle,
+      );
+      if (mounted) {
+        displayInfoBar(context, builder: (_, __) => const InfoBar(
+          title: Text('封面已保存'),
+          severity: InfoBarSeverity.success,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        displayInfoBar(context, builder: (_, __) => InfoBar(
+          title: Text('保存失败：$e'),
+          severity: InfoBarSeverity.error,
+        ));
+      }
+    } finally {
+      _saving = false;
+    }
   }
 
   void _showLogDialog(BuildContext context) {
@@ -118,16 +154,7 @@ class _SoupPageState extends State<SoupPage> {
             children: [
               if (widget.spotlight != null) ...[
                 GestureDetector(
-                  onLongPress: () {
-                    saveStore.saveImageByUrl(
-                      widget.spotlight!.thumbnail,
-                      widget.spotlight!.pureTitle,
-                    );
-                    displayInfoBar(context, builder: (_, __) => const InfoBar(
-                      title: Text('已加入下载队列'),
-                      severity: InfoBarSeverity.success,
-                    ));
-                  },
+                  onLongPress: () => _saveCover(context),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: PixivImage(
@@ -149,7 +176,8 @@ class _SoupPageState extends State<SoupPage> {
               SizedBox(height: 4),
               Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
                   textAlign: TextAlign.center),
-              if (_soupStore.logText.isNotEmpty) ...[
+              // 调试日志入口仅 debug 模式展示（排查用）
+              if (kDebugMode && _soupStore.logText.isNotEmpty) ...[
                 SizedBox(height: 12),
                 Button(
                   child: Text('显示调试日志'),

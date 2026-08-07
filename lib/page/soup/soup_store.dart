@@ -16,17 +16,15 @@
 
 import 'dart:io';
 
-import 'package:bot_toast/bot_toast.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:mobx/mobx.dart';
 import 'package:html/parser.dart' show parse;
+import 'package:pixez/er/hoster.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:rhttp/rhttp.dart' as r;
-import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:html/dom.dart';
-import 'package:rhttp/rhttp.dart' as r;
 
 part 'soup_store.g.dart';
 
@@ -52,33 +50,44 @@ abstract class _SoupStoreBase with Store {
 
   void _log(String msg) {
     print('SoupStore: $msg');
-    logText += '$msg\n';
+    // 限制日志长度（调试面板展示用），防止无限增长
+    logText = '${logText}$msg\n';
+    if (logText.length > 4000) {
+      logText = logText.substring(logText.length - 3000);
+    }
   }
 
-  // 已验证可访问 pixivision 的 Pixiv 源站 IP（2026-06-17 实测：155 已死）
-  static const _visionIps = [
-    '210.140.139.154',
-    '210.140.139.156',
-    '210.140.139.157',
-    '210.140.139.158',
-    '210.140.139.159',
-    '210.140.139.160',
-    '210.140.139.161',
-  ];
+  // 原生 rhttp 客户端复用单例，避免每次 fetch 新建泄漏原生句柄
+  r.RhttpCompatibleClient? _compatClient;
+
+  /// 释放原生客户端（页面销毁时调用）
+  void close() {
+    final client = _compatClient;
+    _compatClient = null;
+    if (client != null) {
+      try {
+        client.close();
+      } catch (e) {
+        print('SoupStore close error: $e');
+      }
+    }
+  }
 
   Future<Dio> _createDio() async {
     _log('creating rhttp client...');
-    final client = await r.RhttpCompatibleClient.create(
+    _compatClient ??= await r.RhttpCompatibleClient.create(
       settings: r.ClientSettings(
         httpVersionPref: r.HttpVersionPref.http1_1,
         tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
         dnsSettings: r.DnsSettings.static(
+          // 复用 Hoster 的 API 源站 IP 池（与 pixivision 同一组 IP，避免重复维护）
           overrides: {
-            'www.pixivision.net': _visionIps,
+            'www.pixivision.net': Hoster.apiPool(),
           },
         ),
       ),
     );
+    final client = _compatClient!;
     _log('rhttp client created');
     final d = Dio(BaseOptions(
       connectTimeout: Duration(seconds: 10),
@@ -98,6 +107,8 @@ abstract class _SoupStoreBase with Store {
 
   @action
   fetch(String url) async {
+    // 防止下拉刷新与手动重试并发：二次触发会清掉首次刚解析出的结果
+    if (isLoading) return;
     errorMessage = null;
     amWorks.clear();
     description = null;
@@ -160,6 +171,18 @@ abstract class _SoupStoreBase with Store {
     // HTML 解析
     var document = parse(body);
     _log('HTML parsed');
+
+    // 提取特辑描述（meta description 优先，回退 article header 文本）
+    final metaDesc = document.querySelector('meta[name="description"]');
+    final metaContent = metaDesc?.attributes['content'];
+    if (metaContent != null &&
+        metaContent.isNotEmpty &&
+        metaContent != 'pixivision') {
+      description = metaContent;
+    } else {
+      final header = document.querySelector('article header');
+      if (header != null) description = header.text.trim();
+    }
 
     // 方法1: 桌面版 .am__work
     final works1 = document.querySelectorAll('.am__work');
@@ -324,18 +347,5 @@ abstract class _SoupStoreBase with Store {
       amWorks.add(amWork);
       _log('added work "${amWork.title}" by ${amWork.user}');
     }
-  }
-}
-
-extension ElementExt on Element {
-  String toTargetString() {
-    return this
-        .getElementsByTagName('p')
-        .map((e) => e.text)
-        .toList()
-        .toString()
-        .replaceAll('[', '')
-        .replaceAll(']', '')
-        .replaceAll(',', '');
   }
 }

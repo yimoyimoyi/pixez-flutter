@@ -284,7 +284,8 @@ class _NovelLightingListState extends State<NovelLightingList> {
           header: PixezDefault.header(context),
           child: NotificationListener<ScrollNotification>(
             onNotification: (notification) {
-              if (_isNested) return true;
+              // 注意：返回 true 会终止冒泡，外层 EasyRefresh 将收不到
+              // 滚动事件导致下拉刷新/上拉加载失效，故恒返回 false
               final visible = notification.metrics.pixels > 500;
               if (_backToTopNotifier.value != visible) {
                 _backToTopNotifier.value = visible;
@@ -298,7 +299,8 @@ class _NovelLightingListState extends State<NovelLightingList> {
         ),
         ValueListenableBackToTopButton(
           notifier: _backToTopNotifier,
-          heroTag: 'novelBackToTop',
+          // 实例唯一 heroTag：rank 页 TabBarView 中多个实例共存，固定 tag 会崩溃
+          heroTag: 'novelBackToTop_${widget.futureGet.hashCode}',
           onPressed: () {
             if (_scrollController.hasClients) {
               _scrollController.jumpTo(0);

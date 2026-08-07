@@ -16,7 +16,7 @@ class SAFPlugin {
   }
 
   static Future<void> writeUri(String uri, Uint8List data) async {
-    return platform.invokeMethod("writeUri", {'uri': uri, 'data': data});
+    await platform.invokeMethod("writeUri", {'uri': uri, 'data': data});
   }
 
   static Future<Uint8List?> openFile() async {

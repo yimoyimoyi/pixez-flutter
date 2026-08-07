@@ -15,7 +15,6 @@
  */
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -30,7 +29,6 @@ import 'package:pixez/er/illust_cacher.dart';
 import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/main.dart';
-import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
@@ -486,7 +484,7 @@ class _PixivImageState extends State<PixivImage> {
                 ),
               ],
             ),
-        );
+          ),
         );
       },
       fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,

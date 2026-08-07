@@ -93,7 +93,14 @@ class _PictureListPageState extends State<PictureListPage> {
                   _dragTotalDx += details.delta.dx;
                   _dragTotalDy += details.delta.dy;
                 },
+                onHorizontalDragCancel: () {
+                  // 手势被纵向滚动打断等场景：重置累计位移
+                  _dragTotalDx = 0;
+                  _dragTotalDy = 0;
+                },
                 onHorizontalDragEnd: (details) {
+                  // 空列表保护：clamp(0, -1) 会抛 ArgumentError
+                  if (_iStores.isEmpty) return;
                   final v = details.velocity.pixelsPerSecond;
 
                   // 使用统一的滑动判定器

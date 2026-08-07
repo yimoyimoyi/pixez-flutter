@@ -218,8 +218,9 @@ class _SearchPageState extends State<SearchPage>
                   final pageSize = _expanded ? 50 : 24;
                   final total = targetTags.length;
                   final maxPage = (total - 1) ~/ pageSize;
-                  if (_tagPage > maxPage) _tagPage = maxPage;
-                  final start = _tagPage * pageSize;
+                  // 局部收敛页码，避免 build 期修改状态（破坏单向数据流）
+                  final tagPage = _tagPage > maxPage ? maxPage : _tagPage;
+                  final start = tagPage * pageSize;
                   final pageTags = targetTags.sublist(
                       start, (start + pageSize > total) ? total : start + pageSize);
 
@@ -244,7 +245,7 @@ class _SearchPageState extends State<SearchPage>
                               mainAxisSize: MainAxisSize.min,
                               children: _expanded
                                   ? [
-                                      if (_tagPage > 0)
+                                      if (tagPage > 0)
                                         ActionChip(
                                           label: Text('上一页'),
                                           padding: EdgeInsets.symmetric(
@@ -256,12 +257,12 @@ class _SearchPageState extends State<SearchPage>
                                         padding: EdgeInsets.symmetric(
                                             horizontal: 8),
                                         child: Text(
-                                          '${_tagPage + 1}/${maxPage + 1}',
+                                          '${tagPage + 1}/${maxPage + 1}',
                                           style:
                                               TextStyle(fontSize: 12),
                                         ),
                                       ),
-                                      if (_tagPage < maxPage)
+                                      if (tagPage < maxPage)
                                         ActionChip(
                                           label: Text('下一页'),
                                           padding: EdgeInsets.symmetric(

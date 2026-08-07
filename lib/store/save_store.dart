@@ -299,36 +299,24 @@ abstract class _SaveStoreBase with Store {
     } catch (e) {}
   }
 
-  /// 直接通过 URL 保存图片（无需 Illusts 对象）
+  /// 直接通过 URL 保存图片（无需 Illusts 对象）。
+  /// 注意：不走 fetcher 队列（fetcher 队列只消费 save() 任务，插 DB 会成幽灵任务），
+  /// 仅本地下载 + 保存；失败时抛出异常由调用方提示。
   Future<void> saveImageByUrl(String url, String title) async {
-    try {
-      final ext = url.contains('.png') ? '.png' : '.jpg';
-      final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      final fileName = '${safeTitle}_cover$ext';
-      final taskPersist = TaskPersist(
-        illustId: 0,
-        userId: 0,
-        userName: '',
-        title: title,
-        fileName: fileName,
-        status: 0,
-        medium: url,
-        url: url,
-      );
-      await fetcher.taskPersistProvider.insert(taskPersist);
-      // 通过 CacheManager 下载（复用 URL 重写拦截器）
-      final file = await pixivCacheManager?.getSingleFile(url);
-      if (file != null) {
-        final bytes = await file.readAsBytes();
-        DocumentPlugin.save(
-          Uint8List.fromList(bytes),
-          fileName,
-          clearOld: userSetting.isClearOldFormatFile,
-        );
-      }
-    } catch (e) {
-      // silent
+    final ext = Uri.tryParse(url)?.path.contains('.png') == true ? '.png' : '.jpg';
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final fileName = '${safeTitle}_cover$ext';
+    // 通过 CacheManager 下载（复用 URL 重写拦截器）
+    final file = await pixivCacheManager?.getSingleFile(url);
+    if (file == null) {
+      throw Exception('下载失败：未获取到图片文件');
     }
+    final bytes = await file.readAsBytes();
+    DocumentPlugin.save(
+      Uint8List.fromList(bytes),
+      fileName,
+      clearOld: userSetting.isClearOldFormatFile,
+    );
   }
 
   _saveInternal(

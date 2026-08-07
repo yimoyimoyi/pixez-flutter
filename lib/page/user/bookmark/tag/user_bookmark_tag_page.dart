@@ -180,7 +180,6 @@ class _NewWidgetState extends State<NewWidget> {
   );
   late BookMarkTagStore _bookMarkTagStore;
   late String restrict;
-  String? _errorMessage;
 
   @override
   void initState() {
@@ -191,9 +190,8 @@ class _NewWidgetState extends State<NewWidget> {
     );
     restrict = widget.restrict;
     super.initState();
-    _bookMarkTagStore.fetch(restrict).catchError((e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
-    });
+    // 不手动 fetch：EasyRefresh(refreshOnStart: true) 会触发首次加载，
+    // 避免打开页面发两次请求
   }
 
   @override
@@ -206,19 +204,17 @@ class _NewWidgetState extends State<NewWidget> {
   Widget build(BuildContext context) {
     return Observer(
       builder: (_) {
-        if (_errorMessage != null) {
+        if (_bookMarkTagStore.errorMessage != null) {
           return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(_errorMessage!, style: TextStyle(color: Colors.grey)),
+                Text(_bookMarkTagStore.errorMessage!,
+                    style: TextStyle(color: Colors.grey)),
                 const SizedBox(height: 12),
                 ElevatedButton(
                   onPressed: () {
-                    setState(() => _errorMessage = null);
-                    _bookMarkTagStore.fetch(restrict).catchError((e) {
-                      if (mounted) setState(() => _errorMessage = e.toString());
-                    });
+                    _bookMarkTagStore.fetch(restrict);
                   },
                   child: Text(I18n.of(context).retry),
                 ),
@@ -232,7 +228,6 @@ class _NewWidgetState extends State<NewWidget> {
           header: PixezDefault.header(context),
           footer: PixezDefault.footer(context),
           onRefresh: () async {
-            _errorMessage = null;
             await _bookMarkTagStore.fetch(restrict);
           },
           onLoad: () async {

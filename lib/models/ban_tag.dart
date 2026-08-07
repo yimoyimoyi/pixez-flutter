@@ -33,6 +33,10 @@ class BanTagPersist {
 }
 
 extension BanTagPersistExtension on BanTagPersist {
+  // 编译后的正则缓存（扩展不能有实例字段，用 Expando 按实例缓存，
+  // 避免趋势标签过滤热路径上每次匹配都重新构建 RegExp）
+  static final Expando<RegExp> _compiledRegex = Expando();
+
   bool isRegexMatch(String tag) {
     if (name == tag) {
       return true;
@@ -40,13 +44,16 @@ extension BanTagPersistExtension on BanTagPersist {
     if (!name.startsWith('r\'') || !name.endsWith('\'')) {
       return false;
     }
-    try {
-      final str = name.substring(2, name.length - 1);
-      final regex = RegExp(str);
-      return regex.hasMatch(tag);
-    } catch (e) {
-      return false;
+    var regex = _compiledRegex[this];
+    if (regex == null) {
+      try {
+        regex = RegExp(name.substring(2, name.length - 1));
+        _compiledRegex[this] = regex;
+      } catch (e) {
+        return false;
+      }
     }
+    return regex.hasMatch(tag);
   }
 }
 

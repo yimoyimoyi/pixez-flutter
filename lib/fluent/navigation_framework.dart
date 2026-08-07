@@ -308,6 +308,17 @@ class PixEzNavigatorState extends State<PixEzNavigator> {
   }
 
   @override
+  void dispose() {
+    // 若销毁的是首个注册的导航器，清空 _first 静态引用，
+    // 避免后续 of() 回退到已销毁实例的悬垂 GlobalKey 触发 assert
+    if (widget.key is GlobalKey<PixEzNavigatorState> &&
+        identical(widget.key, PixEzNavigator._first)) {
+      PixEzNavigator._first = null;
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Navigator(
       key: navigatorKey,

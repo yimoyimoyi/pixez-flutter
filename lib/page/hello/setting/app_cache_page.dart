@@ -1,10 +1,10 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/main.dart';
+import 'package:pixez/utils/cache_utils.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class AppCachePage extends StatefulWidget {
   @override
@@ -22,29 +22,33 @@ class _AppCachePageState extends State<AppCachePage> {
   }
 
   Future<void> _refreshSizes() async {
-    // 图片缓存目录（与 pixivCacheManager 一致，位于临时目录）
-    final tmpDir = await getTemporaryDirectory();
-    final dioCache = Directory('${tmpDir.path}/dioCache');
-    int imageBytes = 0;
-    if (await dioCache.exists()) {
-      await for (final f in dioCache.list(recursive: true)) {
-        if (f is File) imageBytes += await f.length();
+    try {
+      // 图片缓存目录（与 pixivCacheManager 一致，位于临时目录）
+      final tmpDir = await getTemporaryDirectory();
+      final dioCache = Directory('${tmpDir.path}/dioCache');
+      int imageBytes = 0;
+      if (await dioCache.exists()) {
+        await for (final f in dioCache.list(recursive: true)) {
+          if (f is File) imageBytes += await f.length();
+        }
       }
-    }
-    // 小说正文缓存
-    final appDir = await getApplicationSupportDirectory();
-    final novelCache = Directory('${appDir.path}/novel_text_cache');
-    int novelBytes = 0;
-    if (await novelCache.exists()) {
-      await for (final f in novelCache.list(recursive: true)) {
-        if (f is File) novelBytes += await f.length();
+      // 小说正文缓存
+      final appDir = await getApplicationSupportDirectory();
+      final novelCache = Directory('${appDir.path}/novel_text_cache');
+      int novelBytes = 0;
+      if (await novelCache.exists()) {
+        await for (final f in novelCache.list(recursive: true)) {
+          if (f is File) novelBytes += await f.length();
+        }
       }
-    }
-    if (mounted) {
-      setState(() {
-        _imageCacheSize = _formatBytes(imageBytes);
-        _novelCacheSize = _formatBytes(novelBytes);
-      });
+      if (mounted) {
+        setState(() {
+          _imageCacheSize = _formatBytes(imageBytes);
+          _novelCacheSize = _formatBytes(novelBytes);
+        });
+      }
+    } catch (e) {
+      print('_refreshSizes error: $e');
     }
   }
 
@@ -89,16 +93,9 @@ class _AppCachePageState extends State<AppCachePage> {
   }
 
   Future<void> _saveImageCache() async {
-    // 请求存储权限
-    if (Platform.isAndroid) {
-      final status = await Permission.storage.request();
-      if (!status.isGranted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('需要存储权限才能保存缓存')),
-        );
-        return;
-      }
-    }
+    // 注意：不再请求存储权限 —— Android 13+ 的 READ/WRITE_EXTERNAL_STORAGE
+    // 已废弃且权限被永久拒绝；Android 10+ 的 getExternalStorageDirectory()
+    // 返回应用专属目录，本身不需要任何权限。iOS 无外部存储，用文档目录。
     try {
       final tmpDir = await getTemporaryDirectory();
       final srcDir = Directory('${tmpDir.path}/dioCache');
@@ -110,29 +107,20 @@ class _AppCachePageState extends State<AppCachePage> {
         }
         return;
       }
-      // 复制到下载目录
-      final dlDir = await getExternalStorageDirectory();
+      // 复制到下载目录（应用专属目录，无需权限）
+      final dlDir = Platform.isIOS
+          ? await getApplicationDocumentsDirectory()
+          : await getExternalStorageDirectory();
       if (dlDir == null) throw Exception('无法访问存储目录');
-      final destDir = Directory('${dlDir.path}/pixez_cache');
-      if (await destDir.exists()) {
-        await destDir.delete(recursive: true);
-      }
-      await destDir.create(recursive: true);
-
-      final files = await srcDir.list(recursive: true).toList();
-      int copied = 0;
-      for (final entity in files) {
-        if (entity is File) {
-          final relPath = entity.path.substring(srcDir.path.length + 1);
-          final destFile = File('${destDir.path}/$relPath');
-          await destFile.parent.create(recursive: true);
-          await entity.copy(destFile.path);
-          copied++;
-        }
-      }
+      final destPath = '${dlDir.path}/pixez_cache';
+      // 复制在 isolate 中执行，避免大缓存下主 isolate 卡顿
+      final copied = await compute(
+        copyCacheDirectoryTo,
+        (src: srcDir.path, dest: destPath),
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已保存 $copied 个文件到 ${destDir.path}')),
+          SnackBar(content: Text('已保存 $copied 个文件到 $destPath')),
         );
       }
     } catch (e) {

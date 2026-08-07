@@ -35,8 +35,6 @@ class PixEzButton extends StatelessWidget {
         iconButtonStyle: ButtonStyle(
           padding: WidgetStateProperty.all(EdgeInsets.zero),
         ),
-
-        ),
       ),
       child: widget,
     );

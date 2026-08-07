@@ -27,6 +27,11 @@ abstract class _BookMarkTagStoreBase with Store {
   final EasyRefreshController _controller;
   final int id;
   String? nextUrl;
+
+  // 错误信息（observable，UI 层响应渲染错误页；之前静默吞掉导致错误页是死代码）
+  @observable
+  String? errorMessage;
+
   _BookMarkTagStoreBase(this.id, this._controller);
   @action
   fetch(String restrict) async {
@@ -37,8 +42,10 @@ abstract class _BookMarkTagStoreBase with Store {
       nextUrl = result.nextUrl;
       bookmarkTags.clear();
       bookmarkTags.addAll(result.bookmarkTags);
+      errorMessage = null;
       _controller.finishRefresh(IndicatorResult.success);
     } catch (e) {
+      errorMessage = e.toString();
       _controller.finishRefresh(IndicatorResult.fail);
     }
   }

@@ -346,9 +346,6 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
-          ),
-        );
-      },
       fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
       imageUrl: url,
       cacheManager: pixivCacheManager,

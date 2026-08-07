@@ -221,7 +221,9 @@ abstract class _UgoiraStoreBase with Store {
               onReceiveProgress: (int count, int total) {
                 this.count = count;
                 this.total = total;
-                if (count / total == 1) {
+                // total==-1 表示响应无 Content-Length（chunked），
+                // count/total==1 恒为 false 导致永不解压，故用 total>0 判定
+                if (total > 0 && count >= total) {
                   unZip();
                 }
               },

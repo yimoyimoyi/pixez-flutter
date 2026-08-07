@@ -14,6 +14,7 @@
  *
  */
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/main.dart';
@@ -41,11 +42,44 @@ class SoupPage extends StatefulWidget {
 
 class _SoupPageState extends State<SoupPage> {
   final SoupStore _soupStore = SoupStore();
+  bool _saving = false;
 
   @override
   void initState() {
     _soupStore.fetch(widget.url);
     super.initState();
+  }
+
+  @override
+  void dispose() {
+    // 释放原生 rhttp 客户端，避免句柄泄漏
+    _soupStore.close();
+    super.dispose();
+  }
+
+  /// 长按保存封面（防抖，按结果提示）
+  Future<void> _saveCover(BuildContext context) async {
+    if (_saving) return;
+    _saving = true;
+    try {
+      await saveStore.saveImageByUrl(
+        widget.spotlight!.thumbnail,
+        widget.spotlight!.pureTitle,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('封面已保存')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败：$e')),
+        );
+      }
+    } finally {
+      _saving = false;
+    }
   }
 
   @override
@@ -64,15 +98,7 @@ class _SoupPageState extends State<SoupPage> {
                     centerTitle: true,
                     title: Text(widget.spotlight!.pureTitle),
                     background: GestureDetector(
-                      onLongPress: () {
-                        saveStore.saveImageByUrl(
-                          widget.spotlight!.thumbnail,
-                          widget.spotlight!.pureTitle,
-                        );
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('已加入下载队列')),
-                        );
-                      },
+                      onLongPress: () => _saveCover(context),
                       child: NullHero(
                         tag: widget.heroTag,
                         child: PixivImage(
@@ -166,7 +192,8 @@ class _SoupPageState extends State<SoupPage> {
               Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                   textAlign: TextAlign.center),
-              if (_soupStore.logText.isNotEmpty) ...[
+              // 调试日志入口仅 debug 模式展示（排查用）
+              if (kDebugMode && _soupStore.logText.isNotEmpty) ...[
                 SizedBox(height: 12),
                 TextButton.icon(
                   icon: Icon(Icons.bug_report, size: 14),

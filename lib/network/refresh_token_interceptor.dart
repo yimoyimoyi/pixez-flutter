@@ -58,11 +58,12 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
   }
 
   int lastRefreshTime = 0;
-  int retryNum = 0;
+
+  // 重试计数改为 per-request（存入 options.extra），避免跨请求共享计数错乱
+  static const _retryCountKey = 'refresh_token_retry_count';
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    retryNum = 0;
     return handler.next(response);
   }
 
@@ -136,7 +137,8 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
       );
       return handler.resolve(response);
     }
-    // 自动重试：仅在没有收到响应时（连接/传输层错误），上限 2 次
+    // 自动重试：仅在没有收到响应时（连接/传输层错误），上限 2 次（per-request 计数）
+    final retryNum = err.requestOptions.extra[_retryCountKey] as int? ?? 0;
     if (err.response == null && retryNum < 2) {
       final errMsg = '${err.message ?? ''} ${err.error ?? ''}';
       final shouldRetry = err.type == DioExceptionType.unknown ||
@@ -147,20 +149,25 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
           errMsg.contains('Connection closed') ||
           errMsg.contains('broken pipe');
       if (shouldRetry) {
-        print('retry $retryNum ========= ${err.type}: ${errMsg.substring(0, 100)}');
-        retryNum++;
+        final safeMsg = errMsg.length > 100 ? errMsg.substring(0, 100) : errMsg;
+        print('retry $retryNum ========= ${err.type}: $safeMsg');
         await Future.delayed(Duration(milliseconds: 300 << retryNum));
         try {
           RequestOptions options = err.requestOptions;
+          // 注意：计数必须通过 Options.extra 传入重试请求——dio 的
+          // Options.compose 只合并 baseOptions.extra 与传入 Options 的 extra，
+          // 只改 err.requestOptions.extra 会在重试时丢失计数导致无限重试
           var response = await apiClient.httpClient.request(
             options.path,
             options: Options(
               method: options.method,
               headers: options.headers,
               contentType: options.contentType,
+              extra: {...options.extra, _retryCountKey: retryNum + 1},
             ),
             data: options.data,
             queryParameters: options.queryParameters,
+            cancelToken: options.cancelToken,
           );
           return handler.resolve(response);
         } catch (e) {

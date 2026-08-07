@@ -110,6 +110,12 @@ abstract class _NovelStoreBase with Store {
       if (novel != null) novelHistoryStore.insert(novel!);
       // 正文加载成功后保存到本地缓存（方案 A）
       await _saveNovelTextToCache(json);
+      // 元数据始终缺失（API 失败 + 历史恢复失败）时不能静默转圈：
+      // 正文可显示但作品信息缺失，进入错误分支（带重试按钮）
+      if (novel == null) {
+        errorMessage = '正文已加载，但作品信息不可用，可重试刷新';
+        return;
+      }
       fetchOffset();
     } on DioException catch (e) {
       print(e);
@@ -131,30 +137,21 @@ abstract class _NovelStoreBase with Store {
     }
   }
 
-  /// 获取小说正文缓存文件路径
+  /// 获取小说正文缓存文件路径（key 带账号隔离，避免多账号缓存串用）
   Future<File> _novelTextCacheFile() async {
     final dir = await getApplicationSupportDirectory();
     final cacheDir = Directory('${dir.path}/novel_text_cache');
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-    return File('${cacheDir.path}/novel_$id.json');
+    final uid = accountStore.now?.userId ?? 'guest';
+    return File('${cacheDir.path}/novel_${uid}_$id.json');
   }
 
-  /// 保存小说正文 JSON 到本地文件
+  /// 保存小说正文 JSON 到本地文件。
+  /// 元数据恢复走 novelHistoryStore（.meta 文件是死写入，已删除）
   Future<void> _saveNovelTextToCache(String json) async {
     try {
       final file = await _novelTextCacheFile();
       await file.writeAsString(json);
-      // 同时保存元数据用于离线恢复
-      if (novel != null) {
-        final metaFile = File('${file.path}.meta');
-        await metaFile.writeAsString(jsonEncode({
-          'title': novel!.title,
-          'userName': novel!.user.name,
-          'userId': novel!.user.id,
-          'coverUrl': novel!.imageUrls.medium,
-          'cachedAt': DateTime.now().millisecondsSinceEpoch,
-        }));
-      }
     } catch (e) {
       print('_saveNovelTextToCache error: $e');
     }
@@ -168,6 +165,17 @@ abstract class _NovelStoreBase with Store {
       final json = await file.readAsString();
       novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
       spans = await compute(buildSpans, novelTextResponse!);
+      // 缓存命中但元数据缺失时，尝试从历史恢复，避免阅读页无限转圈
+      if (novel == null) {
+        novel = await _restoreNovelFromHistory();
+        if (novel != null) {
+          novelHistoryStore.insert(novel!);
+        } else {
+          // 元数据无法恢复则进入错误分支（带重试按钮），而非无出口的转圈
+          errorMessage = '已加载缓存正文，但作品信息不可用';
+          return true;
+        }
+      }
       errorMessage = null; // 清除错误状态
       fetchOffset();
       return true;
@@ -185,13 +193,42 @@ abstract class _NovelStoreBase with Store {
       final match = all.where((p) => p.novelId == id).toList();
       if (match.isNotEmpty) {
         final p = match.first;
+        // Novel.fromJson 对绝大多数字段做严格非空转换，必须补齐全部必填字段
+        final now = DateTime.now().toIso8601String();
         return Novel.fromJson({
-          'id': p.novelId.toString(),
+          // 注意：id 必须是 num（fromJson 用 `as num` 强转，传 String 会抛 TypeError）
+          'id': p.novelId,
           'title': p.title,
-          'user': {'id': p.userId.toString(), 'name': p.userName},
-          'image_urls': {'square_medium': p.pictureUrl, 'medium': p.pictureUrl, 'large': p.pictureUrl},
-          'total_bookmarks': 0, 'total_view': 0,
-          'create_date': '',
+          'caption': '',
+          'restrict': 0,
+          'x_restrict': 0,
+          'is_original': false,
+          'image_urls': {
+            'square_medium': p.pictureUrl,
+            'medium': p.pictureUrl,
+            'large': p.pictureUrl,
+          },
+          'create_date': now,
+          'tags': <Map<String, dynamic>>[],
+          'page_count': 1,
+          'text_length': 0,
+          'user': {
+            'id': p.userId,
+            'name': p.userName,
+            'account': '',
+            'profile_image_urls': {'medium': ''},
+            'is_followed': false,
+          },
+          'series': <String, dynamic>{},
+          'is_bookmarked': false,
+          'total_bookmarks': 0,
+          'total_view': 0,
+          'visible': true,
+          'total_comments': 0,
+          'is_muted': false,
+          'is_mypixiv_only': false,
+          'is_x_restricted': false,
+          'novel_ai_type': 0,
         });
       }
     } catch (e) {

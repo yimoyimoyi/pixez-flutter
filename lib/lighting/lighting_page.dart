@@ -73,6 +73,10 @@ class LightingList extends StatefulWidget {
 }
 
 class _LightingListState extends State<LightingList> {
+  // 实例唯一 id（heroTag 用，避免 hashCode 不稳定/碰撞）
+  static int _instanceCounter = 0;
+  final int _instanceId = _instanceCounter++;
+
   late LightingStore _store;
   late bool _isNested;
   late ScrollController _scrollController;
@@ -122,56 +126,41 @@ class _LightingListState extends State<LightingList> {
 
   final ValueNotifier<bool> _backToTopNotifier = ValueNotifier(false);
 
-  void _onScrollUpdate() {
-    if (!_scrollController.hasClients) return;
-    final metrics = _scrollController.position;
-    final pixels = metrics.pixels;
-
-    // 回顶按钮可见性
+  /// 统一的滚动状态计算（回顶可见性 + 图片加载协调器可视范围）
+  void _updateScrollState(double pixels, double viewport) {
     final visible = pixels > 500;
     if (_backToTopNotifier.value != visible) {
       _backToTopNotifier.value = visible;
     }
-
-    // 图片加载协调器可视范围
+    // 瀑布流 item 高度估算（跨列数变化时仍有偏差，但 updateVisibleRange 内部有去重）
     const approxItemHeight = 280.0;
     final start = (pixels / approxItemHeight)
         .floor()
         .clamp(0, _store.iStores.length);
-    final end =
-        ((pixels + metrics.viewportDimension) / approxItemHeight)
-            .ceil()
-            .clamp(0, _store.iStores.length);
+    final end = ((pixels + viewport) / approxItemHeight)
+        .ceil()
+        .clamp(0, _store.iStores.length);
     ImageLoadCoordinator.instance.updateVisibleRange(start, end);
+  }
+
+  void _onScrollUpdate() {
+    if (!_scrollController.hasClients) return;
+    final metrics = _scrollController.position;
+    _updateScrollState(metrics.pixels, metrics.viewportDimension);
   }
 
   /// 滚动通知处理：在 EasyRefresh.childBuilder 内部捕获
   /// 嵌套模式和非嵌套模式都通过此方法更新回顶按钮
   bool _onScrollNotify(ScrollNotification notification) {
-    final visible = notification.metrics.pixels > 500;
-    if (_backToTopNotifier.value != visible) {
-      _backToTopNotifier.value = visible;
-    }
-
-    // 嵌套模式下也需要更新图片加载协调器
-    if (_isNested) {
-      const approxItemHeight = 280.0;
-      final pixels = notification.metrics.pixels;
-      final viewport = notification.metrics.viewportDimension;
-      final start = (pixels / approxItemHeight)
-          .floor()
-          .clamp(0, _store.iStores.length);
-      final end = ((pixels + viewport) / approxItemHeight)
-          .ceil()
-          .clamp(0, _store.iStores.length);
-      ImageLoadCoordinator.instance.updateVisibleRange(start, end);
-    }
-
+    _updateScrollState(
+        notification.metrics.pixels, notification.metrics.viewportDimension);
     return false; // 不消费，让 EasyRefresh 也能收到
   }
 
   @override
   void dispose() {
+    // 无条件移除监听（外部传入的 controller 不在此 dispose，但监听必须解除）
+    _scrollController.removeListener(_onScrollUpdate);
     if (widget.scrollController == null) {
       _scrollController.dispose();
     }
@@ -190,7 +179,8 @@ class _LightingListState extends State<LightingList> {
         }),
         ValueListenableBackToTopButton(
           notifier: _backToTopNotifier,
-          heroTag: 'bt_${_store.hashCode}',
+          // 实例唯一 heroTag：hashCode 不稳定且可能碰撞
+          heroTag: 'bt_lighting_$_instanceId',
           onPressed: () {
             // 嵌套模式使用 PrimaryScrollController
             final ctrl = _isNested

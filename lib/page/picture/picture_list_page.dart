@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/lighting/lighting_store.dart';
-import 'package:pixez/main.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
 import 'package:pixez/utils/swipe_evaluator.dart';
@@ -41,6 +40,12 @@ class _PictureListPageState extends State<PictureListPage> {
   bool _evaluating = false;
   Duration _gestureDuration = Duration.zero;
   Duration _pointerDownTimeStamp = Duration.zero;
+  // 手势代际 token：防止迟到的延迟回调误判（快速连续手势）
+  int _gestureToken = 0;
+  // 瞬时释放速度（最后一段 move 的间隔速度，比全程平均更接近真实甩动）
+  double _releaseVelocityDx = 0;
+  double? _lastMoveDx;
+  Duration? _lastMoveTimeStamp;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -69,7 +74,11 @@ class _PictureListPageState extends State<PictureListPage> {
     _dragStartPage = nowPosition;
     _gestureDuration = Duration.zero;
     _pointerDownTimeStamp = e.timeStamp;
-    // 新手势开始时，取消正在进行的 bounceBack 动画
+    _releaseVelocityDx = 0;
+    _lastMoveDx = null;
+    _lastMoveTimeStamp = null;
+    _gestureToken++;
+    // 新手势开始时，取消正在进行的切换动画
     if (_evaluating) {
       _evaluating = false;
       _pageController.jumpTo(_pageController.page ?? nowPosition.toDouble());
@@ -78,6 +87,15 @@ class _PictureListPageState extends State<PictureListPage> {
 
   void _onPointerMove(PointerMoveEvent e) {
     if (!_pointerIsDown || _pointerDownPos == null) return;
+    final now = e.timeStamp;
+    if (_lastMoveTimeStamp != null && _lastMoveDx != null) {
+      final dtMs = (now - _lastMoveTimeStamp!).inMilliseconds;
+      if (dtMs > 0) {
+        _releaseVelocityDx = (e.position.dx - _lastMoveDx!) * 1000 / dtMs;
+      }
+    }
+    _lastMoveDx = e.position.dx;
+    _lastMoveTimeStamp = now;
     _totalDx = e.position.dx - _pointerDownPos!.dx;
     _totalDy = e.position.dy - _pointerDownPos!.dy;
   }
@@ -85,46 +103,54 @@ class _PictureListPageState extends State<PictureListPage> {
   void _onPointerUp(PointerUpEvent e) {
     _pointerIsDown = false;
     _gestureDuration = e.timeStamp - _pointerDownTimeStamp;
-    // 等待 PageView snap/fling 动画结束后再判定
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) _evaluateSwipe();
+    final token = ++_gestureToken;
+    // 手势已结束（无原生动画竞争，physics 恒为 NeverScrollable），
+    // 短延迟让 pointer 事件流处理完毕即可判定
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted && token == _gestureToken) _evaluateSwipe();
     });
+  }
+
+  void _onPointerCancel(PointerCancelEvent e) {
+    // 系统手势接管（通知栏/来电等）：重置状态并使挂起的判定失效
+    _pointerIsDown = false;
+    _gestureToken++;
   }
 
   void _evaluateSwipe() {
     if (_evaluating) return;
-    final currentPage = _pageController.page?.round() ?? nowPosition;
-    if (currentPage == _dragStartPage) return;
-
+    // 空列表保护：clamp(0, -1) 会抛 ArgumentError
+    if (_iStores.isEmpty) return;
     // 使用实际手势耗时计算速度（至少 50ms 防止除零）
     final durationMs = _gestureDuration.inMilliseconds.clamp(50, 2000);
     final durationSec = durationMs / 1000.0;
+    final avgVelocityDx = _totalDx / durationSec;
 
-    // 使用统一的滑动判定器
+    // 使用统一的滑动判定器（释放速度优先，平均速度兜底）
     final result = _swipeEvaluator.evaluate(
       totalDx: _totalDx,
       totalDy: _totalDy,
-      velocityDx: _totalDx / durationSec,
+      velocityDx: _releaseVelocityDx.abs() > 0 ? _releaseVelocityDx : avgVelocityDx,
       velocityDy: _totalDy / durationSec,
       screenWidth: screenWidth * 2,
     );
 
-    if (!result.accepted) {
-      _bounceBack();
-      return;
-    }
+    if (!result.accepted) return; // 拒绝：不做任何动画（无原生 fling 竞争）
 
-    // 接受滑动
-    setState(() => nowPosition = currentPage);
-  }
+    final target = _totalDx < 0 ? _dragStartPage + 1 : _dragStartPage - 1;
+    // 上限为 _iStores.length：最后一页后可滑到"加载更多"页（PictureListNextPage）
+    final clamped = target.clamp(0, _iStores.length);
+    if (clamped == _dragStartPage) return;
 
-  void _bounceBack() {
     _evaluating = true;
     _pageController
-        .animateToPage(_dragStartPage,
-            duration: const Duration(milliseconds: 150),
+        .animateToPage(clamped,
+            duration: const Duration(milliseconds: 200),
             curve: Curves.easeInOut)
-        .then((_) => _evaluating = false);
+        .then((_) {
+      _evaluating = false;
+      if (mounted) setState(() => nowPosition = clamped);
+    });
   }
 
   @override
@@ -135,11 +161,12 @@ class _PictureListPageState extends State<PictureListPage> {
         onPointerDown: _onPointerDown,
         onPointerMove: _onPointerMove,
         onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerCancel,
         child: PageView.builder(
           controller: _pageController,
-          physics: userSetting.swipeChangeArtwork
-              ? null
-              : const NeverScrollableScrollPhysics(),
+          // 恒为 NeverScrollable：翻页完全由自定义判定驱动，
+          // 避免原生 snap/fling 动画与 300ms 后判定互相竞争（翻过去又弹回）
+          physics: const NeverScrollableScrollPhysics(),
           itemBuilder: (BuildContext context, int index) {
             if (index == _iStores.length && _lightingStore != null) {
               return PictureListNextPage(

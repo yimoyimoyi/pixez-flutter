@@ -21,7 +21,6 @@ import 'package:pixez/er/leader.dart';
 import 'package:pixez/fluent/page/login/token_page.dart';
 import 'package:pixez/fluent/page/webview/webview_page.dart';
 import 'package:pixez/i18n.dart';
-import 'package:pixez/main.dart';
 import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/fluent/page/about/about_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';

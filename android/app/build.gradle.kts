@@ -64,7 +64,7 @@ val packageName = if (isGooglePlay) {
 
 android {
     namespace = "com.perol.pixez"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     compileOptions {
@@ -79,7 +79,9 @@ android {
     defaultConfig {
         applicationId = packageName
         minSdk = flutter.minSdkVersion
-        targetSdk = 37
+        // 注：上游 target 37 的 SDK 目录名为 android-37.0，AGP 8.13 查找 android-37 失败；
+        // 本地 fork 自用构建用已安装的 android-36（36 无此命名问题）
+        targetSdk = 36
         versionCode = 10010023
         versionName = "0.9.104 custom"
         buildConfigField("boolean", "IS_GOOGLEPLAY", isGooglePlay.toString())

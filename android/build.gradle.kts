@@ -17,7 +17,8 @@
 allprojects {
     repositories {
         google()
-        mavenCentral()
+        // 国内网络下 mavenCentral() 被 TLS 阻断，改用阿里云镜像（public 含 central 全量）
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
     }
 }
 

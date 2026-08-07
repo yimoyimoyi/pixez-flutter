@@ -48,10 +48,21 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter/painting.dart' show PaintingBinding;
 
 /// 调优 Flutter ImageCache：增大图片内存缓存上限，
-/// 减少浏览 Pixiv 大图时的缓存抖动和解码次数
+/// 减少浏览 Pixiv 大图时的缓存抖动和解码次数。
+/// 按设备内存分级：≥4GB 用 200MB，低内存设备降为 100MB 防 OOM。
 void _tuneImageCache() {
-  // 默认 100MB → 提升到 200MB，适应 Pixiv 大图场景
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
+  int? memBytes;
+  if (Platform.isAndroid) {
+    try {
+      final result = Process.runSync('cat', ['/proc/meminfo']);
+      final meminfo = result.stdout.toString();
+      final match = RegExp(r'MemTotal:\s+(\d+) kB').firstMatch(meminfo);
+      if (match != null) memBytes = int.parse(match.group(1)!) * 1024;
+    } catch (_) {}
+  }
+  const gb = 1024 * 1024 * 1024;
+  final limit = (memBytes ?? 4 * gb) >= 4 * gb ? 200 * 1024 * 1024 : 100 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = limit;
 }
 
 final RouteObserver<ModalRoute<void>> routeObserver =

@@ -187,6 +187,10 @@ class Hoster {
     return result.split(',');
   }
 
+  /// 是否已有动态缓存（不含硬编码常量池回退）。
+  /// 用于区分"预热是否真正生效"（cachedIps 会回退到常量池导致恒非空）
+  static bool hasDynamicCache(String host) => _map[host] != null;
+
   /// TCP 443 端口探测，筛出可连通的 IP（无须代理无须 DNS）
   static Future<List<String>> tcpProbe(
     List<String> ips, {

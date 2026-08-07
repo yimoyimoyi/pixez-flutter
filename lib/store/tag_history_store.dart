@@ -33,46 +33,65 @@ abstract class _TagHistoryStoreBase with Store {
   TagsPersistProvider tagsPersistProvider = TagsPersistProvider();
   ObservableList<TagsPersist> tags = ObservableList();
 
-  /// 确保数据库已打开，避免多次 open 的 I/O 开销
+  // 操作串行化队列：防止页面初始化 fetch 与用户快速输入 insert 并发时
+  // tags.clear()+addAll 覆盖掉刚插入的条目
+  Future<void> _opChain = Future.value();
+
+  Future<void> _enqueue(Future<void> Function() op) {
+    final next = _opChain.then((_) => op());
+    // 吞掉链上前置操作的错误，保证队列继续推进
+    _opChain = next.catchError((_) {});
+    return next;
+  }
+
+  /// 确保数据库已打开（sqflite 对同一 path 复用连接，这里主要为首次打开）
   Future<void> _ensureOpen() async {
     await tagsPersistProvider.open();
   }
 
   @action
   fetch() async {
-    await _ensureOpen();
-    var result = await tagsPersistProvider.getAllAccount();
-    tags.clear();
-    tags.addAll(result);
+    await _enqueue(() async {
+      await _ensureOpen();
+      var result = await tagsPersistProvider.getAllAccount();
+      tags.clear();
+      tags.addAll(result);
+    });
   }
 
   @action
   insert(TagsPersist tagsPersist) async {
-    await _ensureOpen();
-    for (int i = 0; i < tags.length; i++) {
-      if (tags[i].name == tagsPersist.name && tags[i].type == Constants.type) {
-        await tagsPersistProvider.delete(tags[i].id!);
-        tags.removeAt(i);
-        break;
+    await _enqueue(() async {
+      await _ensureOpen();
+      for (int i = 0; i < tags.length; i++) {
+        if (tags[i].name == tagsPersist.name && tags[i].type == Constants.type) {
+          await tagsPersistProvider.delete(tags[i].id!);
+          tags.removeAt(i);
+          break;
+        }
       }
-    }
-    tagsPersist.type = Constants.type;
-    await tagsPersistProvider.insert(tagsPersist);
-    tags.insert(0, tagsPersist);
+      tagsPersist.type = Constants.type;
+      await tagsPersistProvider.insert(tagsPersist);
+      tags.insert(0, tagsPersist);
+    });
   }
 
   @action
   delete(int id) async {
-    await _ensureOpen();
-    await tagsPersistProvider.delete(id);
-    tags.removeWhere((t) => t.id == id);
+    await _enqueue(() async {
+      await _ensureOpen();
+      await tagsPersistProvider.delete(id);
+      tags.removeWhere((t) => t.id == id);
+    });
   }
 
   @action
   deleteAll() async {
-    await _ensureOpen();
-    await tagsPersistProvider.deleteAll(type: Constants.type);
-    tags.clear();
+    await _enqueue(() async {
+      await _ensureOpen();
+      await tagsPersistProvider.deleteAll(type: Constants.type);
+      tags.clear();
+    });
   }
 
   final EXPORT_TYPE = "history_tags";
