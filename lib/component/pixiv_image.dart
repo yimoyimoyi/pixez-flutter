@@ -223,12 +223,42 @@ class _PixivImageState extends State<PixivImage> {
         width = widget.width;
         height = widget.height;
       });
+      // 切换图片时主动检查文件缓存：命中则直接 Image.memory 显示，
+      // 完全绕过 CachedNetworkImage（避免其 url 变化时 placeholder
+      // 必然短暂显示 → 加载动画闪烁）
+      _checkCacheOnUrlChange(widget.url);
       // 重新请求槽位
       if (widget.priorityIndex != null) {
         _canLoad = false;
         _registeredUrl = widget.url;
         _requestSlot();
       }
+    }
+  }
+
+  /// 切换图片时的缓存检查：命中即用本地字节直显（零动画、零 placeholder）
+  Future<void> _checkCacheOnUrlChange(String targetUrl) async {
+    if (targetUrl.isEmpty || _cachedBytes != null) return;
+    try {
+      final resolvedUrl = PixivImageSource.resolve(
+        targetUrl,
+        networkMode: userSetting.networkMode,
+        pictureSource: userSetting.pictureSource,
+      );
+      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
+      // 代际校验：检查期间 url 可能又变了（快速连续切换），
+      // 过期回调填入的字节会导致显示错误图片
+      if (fileInfo != null && mounted && url == targetUrl && _cachedBytes == null) {
+        final bytes = fileInfo.file.readAsBytesSync();
+        if (bytes.isNotEmpty) {
+          setState(() {
+            _cachedBytes = Uint8List.fromList(bytes);
+            _fromCache = true;
+          });
+        }
+      }
+    } catch (_) {
+      // 缓存检查失败：走正常加载流程
     }
   }
 
@@ -350,9 +380,13 @@ class _PixivImageState extends State<PixivImage> {
       if (fileInfo != null && mounted && !_canLoad) {
         final bytes = fileInfo.file.readAsBytesSync();
         if (bytes.isNotEmpty) {
-          // 缓存命中：取消排队，直接显示
+          // 缓存命中：直接填入 _cachedBytes，build 走"已缓存"分支
+          //（Image.memory 直接显示，完全绕过 CachedNetworkImage 管线）
           _coordinator.cancel(targetUrl);
-          setState(() => _canLoad = true);
+          setState(() {
+            _cachedBytes = Uint8List.fromList(bytes);
+            _fromCache = true;
+          });
         }
       }
     } catch (_) {
@@ -433,6 +467,7 @@ class _PixivImageState extends State<PixivImage> {
           widget.placeWidget ??
           // 加载超过 200ms 才显示进度环，避免快速加载（缓存命中）时的闪烁
           _DelayedIndicator(
+            url: url,
             child: Container(
               height: height,
               child: Center(
@@ -490,7 +525,9 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
-      fadeOutDuration: widget.fade ? const Duration(milliseconds: 1000) : null,
+      // fadeOut 期间 CachedNetworkImage 会显示 placeholder（旧图切换时），
+      // 缩短到 150ms 减少加载动画暴露窗口；缓存命中走方案 B 完全无此问题
+      fadeOutDuration: widget.fade ? const Duration(milliseconds: 150) : null,
       imageUrl: url,
       cacheManager: pixivCacheManager,
       height: height,
@@ -519,14 +556,18 @@ class PixivProvider {
 }
 
 /// 延迟显示加载指示器：加载在 [delay] 内完成则不显示（组件被替换后
-/// 计时器回调不再生效），避免缓存命中/快速加载时的进度环闪烁
+/// 计时器回调不再生效），避免缓存命中/快速加载时的进度环闪烁。
+/// 父组件 url 变化（图片已加载完成）时立即隐藏，避免"图片已显示但
+/// 动画仍持续"的问题。
 class _DelayedIndicator extends StatefulWidget {
   final Widget child;
   final Duration delay;
+  final String? url;
 
   const _DelayedIndicator({
     required this.child,
     this.delay = const Duration(milliseconds: 200),
+    this.url,
   });
 
   @override
@@ -543,6 +584,20 @@ class _DelayedIndicatorState extends State<_DelayedIndicator> {
     _timer = Timer(widget.delay, () {
       if (mounted) setState(() => _visible = true);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _DelayedIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // url 变化 = 切换图片（CachedNetworkImage 重新加载）：
+    // 立即隐藏进度环，并重新计时（新 url 慢加载时仍会显示指示器）
+    if (widget.url != null && widget.url != oldWidget.url) {
+      _timer?.cancel();
+      if (_visible) setState(() => _visible = false);
+      _timer = Timer(widget.delay, () {
+        if (mounted) setState(() => _visible = true);
+      });
+    }
   }
 
   @override
