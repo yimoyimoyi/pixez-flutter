@@ -31,6 +31,8 @@ class _PictureListPageState extends State<PictureListPage> {
   late IllustStore _store;
 
   // 滑动状态（自定义跟手 + 判定）
+  Offset? _pointerDownPos;
+  bool _dragActive = false; // 横向跟手是否激活（方向判定后）
   double _dragTotalDx = 0;
   int _dragStartPage = 0;
   double _dragStartOffset = 0;
@@ -38,6 +40,10 @@ class _PictureListPageState extends State<PictureListPage> {
   // 手势代际 token：防止旧手势的动画回调误判（快速连续手势）
   int _gestureToken = 0;
   double _pageWidth = 1;
+  // 瞬时释放速度（最后一段 move 的间隔速度）
+  double _releaseVelocityDx = 0;
+  double? _lastMoveDx;
+  Duration? _lastMoveTs;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -50,6 +56,92 @@ class _PictureListPageState extends State<PictureListPage> {
     nowPosition = _iStores.indexOf(_store);
     _pageController = PageController(initialPage: nowPosition);
     super.initState();
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    _pointerDownPos = e.position;
+    _dragActive = false;
+    _dragTotalDx = 0;
+    _releaseVelocityDx = 0;
+    _lastMoveDx = null;
+    _lastMoveTs = null;
+    _dragStartPage = nowPosition;
+    _dragStartOffset = _pageController.page ?? nowPosition.toDouble();
+    _gestureToken++;
+    // 新手势开始时，取消进行中的切换/回弹动画
+    if (_evaluating) {
+      _evaluating = false;
+      _pageController.jumpTo(_pageController.page ?? _dragStartOffset);
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (_pointerDownPos == null) return;
+    final dx = e.position.dx - _pointerDownPos!.dx;
+    final dy = e.position.dy - _pointerDownPos!.dy;
+
+    if (!_dragActive) {
+      // 方向判定：纵向主导（多图页面上下滚动）交给内层滚动，
+      // 不激活横向跟手；只有横向主导且超过阈值才跟手
+      if (dy.abs() > dx.abs()) return;
+      if (dx.abs() < 36) return; // 横向激活阈值（≈ 2× touch slop）
+      _dragActive = true;
+    }
+
+    if (_dragActive) {
+      _dragTotalDx = dx;
+      // 瞬时速度（释放时用）
+      if (_lastMoveTs != null && _lastMoveDx != null) {
+        final dtMs = (e.timeStamp - _lastMoveTs!).inMilliseconds;
+        if (dtMs > 0) {
+          _releaseVelocityDx = (e.position.dx - _lastMoveDx!) * 1000 / dtMs;
+        }
+      }
+      _lastMoveDx = e.position.dx;
+      _lastMoveTs = e.timeStamp;
+      // 跟手：jumpTo 单位是像素（ScrollController 语义），
+      // _dragStartOffset 是页单位，需换算：像素 = 页 × 视口宽
+      _pageController.jumpTo(_dragStartOffset * _pageWidth - dx);
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    final wasActive = _dragActive;
+    _pointerDownPos = null;
+    _dragActive = false;
+    if (!wasActive || _iStores.isEmpty) return;
+
+    // 用瞬时速度判定（无瞬时值则用平均速度兜底）
+    final lastTs = _lastMoveTs ?? e.timeStamp;
+    final durationMs = (e.timeStamp - lastTs).inMilliseconds;
+    final avgV = durationMs > 0 ? _dragTotalDx * 1000 / durationMs : 0.0;
+    final v = _releaseVelocityDx.abs() > 0 ? _releaseVelocityDx : avgV;
+    final result = _swipeEvaluator.evaluate(
+      totalDx: _dragTotalDx,
+      totalDy: 0,
+      velocityDx: v,
+      velocityDy: 0,
+      screenWidth: _pageWidth,
+    );
+
+    int target = _dragStartPage;
+    if (result.accepted) {
+      target = result.direction == SwipeDirection.left
+          ? _dragStartPage + 1
+          : _dragStartPage - 1;
+    }
+    // clamp 到合法范围（上限含"加载更多"页）；拒绝/越界回弹
+    target = target.clamp(0, _iStores.length);
+    _animateTo(target);
+  }
+
+  void _onPointerCancel(PointerCancelEvent e) {
+    // 系统手势接管（通知栏/来电等）：回弹原页
+    _pointerDownPos = null;
+    if (_dragActive) {
+      _dragActive = false;
+      _animateTo(_dragStartPage);
+    }
   }
 
   /// 平滑切换到目标页（接受→前进/后退，拒绝→回弹）
@@ -109,54 +201,14 @@ class _PictureListPageState extends State<PictureListPage> {
             }),
             Container(
               margin: const EdgeInsets.all(24),
-              child: GestureDetector(
-                onHorizontalDragStart: (_) {
-                  _dragTotalDx = 0;
-                  _dragStartPage = nowPosition;
-                  _dragStartOffset =
-                      _pageController.page ?? nowPosition.toDouble();
-                  _gestureToken++;
-                  // 新手势开始时，取消进行中的切换/回弹动画
-                  if (_evaluating) {
-                    _evaluating = false;
-                    _pageController
-                        .jumpTo(_pageController.page ?? _dragStartOffset);
-                  }
-                },
-                onHorizontalDragUpdate: (details) {
-                  _dragTotalDx += details.delta.dx;
-                  // 跟手：jumpTo 以像素为单位，页偏移需换算（页 × 视口宽）
-                  _pageController.jumpTo(
-                      _dragStartOffset * _pageWidth - _dragTotalDx);
-                },
-                onHorizontalDragCancel: () {
-                  // 手势被系统打断：回弹原页
-                  _animateTo(_dragStartPage);
-                },
-                onHorizontalDragEnd: (details) {
-                  // 空列表保护：clamp(0, -1) 会抛 ArgumentError
-                  if (_iStores.isEmpty) return;
-                  final v = details.velocity.pixelsPerSecond;
-
-                  // 使用统一的滑动判定器（水平手势的垂直分量已被竞技场裁决）
-                  final result = _swipeEvaluator.evaluate(
-                    totalDx: _dragTotalDx,
-                    totalDy: 0,
-                    velocityDx: v.dx,
-                    velocityDy: v.dy,
-                    screenWidth: _pageWidth,
-                  );
-
-                  int target = _dragStartPage;
-                  if (result.accepted) {
-                    target = result.direction == SwipeDirection.left
-                        ? _dragStartPage + 1
-                        : _dragStartPage - 1;
-                  }
-                  // clamp 到合法范围（上限含"加载更多"页）；拒绝/越界回弹
-                  target = target.clamp(0, _iStores.length);
-                  _animateTo(target);
-                },
+              // Listener 观察式方向判定（不参与手势竞技场，内层纵向滚动
+              // 永远正常）——横向主导才激活跟手，避免多图页面上下滑动误判
+              child: Listener(
+                onPointerDown: _onPointerDown,
+                onPointerMove: _onPointerMove,
+                onPointerUp: _onPointerUp,
+                onPointerCancel: _onPointerCancel,
+                child: const SizedBox.expand(),
               ),
             ),
           ],

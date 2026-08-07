@@ -31,6 +31,8 @@ class _PictureListPageState extends State<PictureListPage> {
   late IllustStore _store;
 
   // 滑动状态（自定义跟手 + 判定）
+  Offset? _pointerDownPos;
+  bool _dragActive = false; // 横向跟手是否激活（方向判定后）
   double _totalDx = 0;
   int _dragStartPage = 0;
   double _dragStartOffset = 0;
@@ -38,6 +40,10 @@ class _PictureListPageState extends State<PictureListPage> {
   // 手势代际 token：防止旧手势的动画回调误判（快速连续手势）
   int _gestureToken = 0;
   double _pageWidth = 1;
+  // 瞬时释放速度（最后一段 move 的间隔速度）
+  double _releaseVelocityDx = 0;
+  double? _lastMoveDx;
+  Duration? _lastMoveTs;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -58,8 +64,13 @@ class _PictureListPageState extends State<PictureListPage> {
     super.dispose();
   }
 
-  void _onDragStart(DragStartDetails d) {
+  void _onPointerDown(PointerDownEvent e) {
+    _pointerDownPos = e.position;
+    _dragActive = false;
     _totalDx = 0;
+    _releaseVelocityDx = 0;
+    _lastMoveDx = null;
+    _lastMoveTs = null;
     _dragStartPage = nowPosition;
     _dragStartOffset = _pageController.page ?? nowPosition.toDouble();
     _gestureToken++;
@@ -70,23 +81,52 @@ class _PictureListPageState extends State<PictureListPage> {
     }
   }
 
-  void _onDragUpdate(DragUpdateDetails d) {
-    _totalDx += d.delta.dx;
-    // 跟手：图片随手指 1:1 平移。
-    // 注意：jumpTo 的单位是像素（ScrollController 语义），
-    // 而 _dragStartOffset 是页单位，需换算：像素 = 页 × 视口宽
-    _pageController.jumpTo(_dragStartOffset * _pageWidth - _totalDx);
+  void _onPointerMove(PointerMoveEvent e) {
+    if (_pointerDownPos == null) return;
+    final dx = e.position.dx - _pointerDownPos!.dx;
+    final dy = e.position.dy - _pointerDownPos!.dy;
+
+    if (!_dragActive) {
+      // 方向判定：纵向主导（多图页面上下滚动）交给内层滚动，
+      // 不激活横向跟手；只有横向主导且超过阈值才跟手
+      if (dy.abs() > dx.abs()) return;
+      if (dx.abs() < 36) return; // 横向激活阈值（≈ 2× touch slop）
+      _dragActive = true;
+    }
+
+    if (_dragActive) {
+      _totalDx = dx;
+      // 瞬时速度（释放时用）
+      if (_lastMoveTs != null && _lastMoveDx != null) {
+        final dtMs = (e.timeStamp - _lastMoveTs!).inMilliseconds;
+        if (dtMs > 0) {
+          _releaseVelocityDx = (e.position.dx - _lastMoveDx!) * 1000 / dtMs;
+        }
+      }
+      _lastMoveDx = e.position.dx;
+      _lastMoveTs = e.timeStamp;
+      // 跟手：jumpTo 单位是像素（ScrollController 语义），
+      // _dragStartOffset 是页单位，需换算：像素 = 页 × 视口宽
+      _pageController.jumpTo(_dragStartOffset * _pageWidth - dx);
+    }
   }
 
-  void _onDragEnd(DragEndDetails d) {
-    if (_iStores.isEmpty) return;
-    final v = d.velocity.pixelsPerSecond;
-    // 水平手势的垂直分量已被手势竞技场裁决为不主导，dy 传 0
+  void _onPointerUp(PointerUpEvent e) {
+    final wasActive = _dragActive;
+    _pointerDownPos = null;
+    _dragActive = false;
+    if (!wasActive || _iStores.isEmpty) return;
+
+    // 用瞬时速度判定（无瞬时值则用平均速度兜底）
+    final lastTs = _lastMoveTs ?? e.timeStamp;
+    final durationMs = (e.timeStamp - lastTs).inMilliseconds;
+    final avgV = durationMs > 0 ? _totalDx * 1000 / durationMs : 0.0;
+    final v = _releaseVelocityDx.abs() > 0 ? _releaseVelocityDx : avgV;
     final result = _swipeEvaluator.evaluate(
       totalDx: _totalDx,
       totalDy: 0,
-      velocityDx: v.dx,
-      velocityDy: v.dy,
+      velocityDx: v,
+      velocityDy: 0,
       screenWidth: _pageWidth,
     );
 
@@ -101,9 +141,13 @@ class _PictureListPageState extends State<PictureListPage> {
     _animateTo(target);
   }
 
-  void _onDragCancel() {
+  void _onPointerCancel(PointerCancelEvent e) {
     // 系统手势接管（通知栏/来电等）：回弹原页
-    _animateTo(_dragStartPage);
+    _pointerDownPos = null;
+    if (_dragActive) {
+      _dragActive = false;
+      _animateTo(_dragStartPage);
+    }
   }
 
   /// 平滑切换到目标页（接受→前进/后退，拒绝→回弹）
@@ -128,14 +172,14 @@ class _PictureListPageState extends State<PictureListPage> {
   Widget build(BuildContext context) {
     _pageWidth = MediaQuery.of(context).size.width;
     return Observer(builder: (_) {
-      // 自定义跟手滑动：拖动时图片随手指平移（jumpTo），
-      // 松手后判定（速度优先/位移兜底）→ 平滑切换或回弹。
-      // 手势竞技场自动裁决水平 vs 内层纵向滚动，斜向拖拽不会误触发
-      return GestureDetector(
-        onHorizontalDragStart: _onDragStart,
-        onHorizontalDragUpdate: _onDragUpdate,
-        onHorizontalDragEnd: _onDragEnd,
-        onHorizontalDragCancel: _onDragCancel,
+      // 自定义跟手滑动：Listener 观察式方向判定（不参与手势竞技场，
+      // 内层纵向滚动永远正常）——横向主导才激活跟手，松手后判定
+      //（速度优先/位移兜底）→ 平滑切换或回弹
+      return Listener(
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerCancel,
         child: PageView.builder(
           controller: _pageController,
           // 恒为 NeverScrollable：跟手与判定完全由本组件驱动
