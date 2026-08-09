@@ -17,6 +17,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
@@ -184,6 +185,10 @@ class _PixivImageState extends State<PixivImage> {
   bool _slotReleased = false;
   String? _registeredUrl;
   Timer? _slotTimer; // 槽位超时保护
+  // 已检查过文件缓存的 url（去重：同一 url 只查一次，避免频繁磁盘查询）
+  String? _cacheCheckedUrl;
+  // 预解码完成的位图（RawImage 直显，零解码窗口）
+  ui.Image? _decodedImage;
 
   ImageLoadCoordinator get _coordinator => ImageLoadCoordinator.instance;
 
@@ -206,6 +211,45 @@ class _PixivImageState extends State<PixivImage> {
     }
   }
 
+  /// 图片加载完成后预解码文件缓存字节，完成后用 RawImage 显示。
+  ///
+  /// 为什么需要：返回页面时 TickerMode 恢复 → CachedNetworkImage 内部
+  /// OctoImage 的 Image 组件重新 resolve。Image 组件在 `_updateSourceStream`
+  /// 中（gaplessPlayback 默认 false）会强制清空 _imageInfo；ImageCache
+  /// 命中（同一 completer）则立即恢复无感知，未命中（被其他页面 LRU
+  /// 逐出）则显示 placeholder 直到重新加载完成 → 白屏。
+  /// 本方案在图片加载完成时就后台解码，随后无感切换到 RawImage 分支
+  /// （同图切换，视觉无变化）——此后任何时刻返回，位图必然已就绪，
+  /// OctoImage 已不在树中，其清空/重载机制完全不涉及。
+  Future<void> _preDecodeAfterLoad(String targetUrl) async {
+    if (targetUrl.isEmpty || _decodedImage != null) return;
+    try {
+      final resolvedUrl = PixivImageSource.resolve(
+        targetUrl,
+        networkMode: userSetting.networkMode,
+        pictureSource: userSetting.pictureSource,
+      );
+      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
+      // 代际校验：检查期间 url 可能又变了（快速切换）
+      if (fileInfo != null &&
+          mounted &&
+          url == targetUrl &&
+          _decodedImage == null) {
+        final bytes = fileInfo.file.readAsBytesSync();
+        if (bytes.isNotEmpty) {
+          final image = await decodeImageFromList(bytes);
+          if (mounted && url == targetUrl && _decodedImage == null) {
+            setState(() => _decodedImage = image);
+          } else {
+            image.dispose();
+          }
+        }
+      }
+    } catch (_) {
+      // 解码失败：保持现有加载流程
+    }
+  }
+
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -218,6 +262,9 @@ class _PixivImageState extends State<PixivImage> {
       _cachedBytes = null;
       _fromCache = false;
       _slotReleased = false;
+      _cacheCheckedUrl = null;
+      _decodedImage?.dispose();
+      _decodedImage = null;
       setState(() {
         url = widget.url;
         width = widget.width;
@@ -428,6 +475,21 @@ class _PixivImageState extends State<PixivImage> {
     final currentKey = url;
     if (_lastKey != currentKey) { _lastKey = currentKey; }
 
+    // 已预解码完成：RawImage 直显（零解码窗口，免疫返回时重新加载）
+    if (_decodedImage != null) {
+      return Container(
+        width: width,
+        height: height,
+        color: Colors.grey.shade200,
+        child: RawImage(
+          image: _decodedImage,
+          fit: fit ?? BoxFit.fitWidth,
+          width: width,
+          height: height,
+        ),
+      );
+    }
+
     // 方案 B: 如果已从缓存加载，直接显示（不受优先级协调影响）
     if (_cachedBytes != null) {
       return Container(
@@ -437,6 +499,8 @@ class _PixivImageState extends State<PixivImage> {
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // 解码期间先显示占位（缩略图），避免大图重新解码时空白
+            if (placeWidget != null) placeWidget!,
             Image.memory(_cachedBytes!, fit: fit ?? BoxFit.fitWidth, width: width, height: height),
             // 缓存标记
             Positioned(
@@ -484,6 +548,12 @@ class _PixivImageState extends State<PixivImage> {
           ),
       imageBuilder: (context, imageProvider) {
         _releaseSlot();
+        // 加载完成：后台预解码文件缓存，完成后 RawImage 直显，
+        // 返回页面时零窗口（免疫 ImageCache 逐出导致的重新加载白屏）
+        if (_cacheCheckedUrl != url) {
+          _cacheCheckedUrl = url;
+          _preDecodeAfterLoad(widget.url);
+        }
         return Image(
           image: imageProvider,
           fit: fit ?? BoxFit.fitWidth,
@@ -540,6 +610,7 @@ class _PixivImageState extends State<PixivImage> {
   @override
   void dispose() {
     _slotTimer?.cancel();
+    _decodedImage?.dispose();
     _coordinator.cancel(widget.url);
     super.dispose();
   }
