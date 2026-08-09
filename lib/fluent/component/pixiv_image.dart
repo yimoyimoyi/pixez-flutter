@@ -24,6 +24,7 @@ import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
+import 'package:pixez/constants.dart';
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
@@ -32,9 +33,9 @@ import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/pixez_network_settings.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
-const ImageHost = "i.pximg.net";
-const ImageCatHost = "i.pixiv.re";
-const ImageSHost = "s.pximg.net";
+// 主机常量定义在 constants.dart（消除 hoster ↔ pixiv_image 循环依赖），
+// 经此 export 保持旧引用（网络设置页等）无需改动
+export 'package:pixez/constants.dart' show ImageHost, ImageCatHost, ImageSHost;
 
 // 注意，stable的http_interceptor这里是无效的，因为实现send是todo
 // 实现CacheManager和混入ImageCacheManager缺一不可
@@ -128,12 +129,18 @@ class _PixivImageState extends State<PixivImage> {
   bool _slotReleased = false;
   String? _registeredUrl;
   Timer? _slotTimer;
+  // 连续槽位超时计数：网络故障时避免无限"排队→超时→重排"循环
+  int _slotTimeoutCount = 0;
+  static const int _maxSlotTimeouts = 3;
   // 已检查过文件缓存的 url（去重：同一 url 只查一次，避免频繁磁盘查询）
   String? _cacheCheckedUrl;
   // 预解码完成的位图（RawImage 直显，零解码窗口）
   ui.Image? _decodedImage;
 
-  ImageLoadCoordinator get _coordinator => ImageLoadCoordinator.instance;
+  // 协调器实例：initState 阶段（Element active）从列表作用域解析并缓存。
+  // 不能惰性初始化或每次用 getter 查 context——dispose 阶段 Element 已
+  // defunct，祖先查找会抛 "Looking up a deactivated widget's ancestor is unsafe"
+  late final ImageLoadCoordinator _coordinator;
 
   @override
   void initState() {
@@ -144,6 +151,9 @@ class _PixivImageState extends State<PixivImage> {
     fit = widget.fit;
     fade = widget.fade;
     placeWidget = widget.placeWidget;
+    // initState 阶段解析协调器实例（此时 Element active，可安全祖先查找），
+    // 供 dispose 等阶段使用缓存引用
+    _coordinator = ImageLoadCoordinator.of(context);
     super.initState();
 
     // 如果参与了优先级协调，立即注册槽位（同步，无帧延迟）
@@ -165,7 +175,19 @@ class _PixivImageState extends State<PixivImage> {
   /// （同图切换，视觉无变化）——此后任何时刻返回，位图必然已就绪，
   /// OctoImage 已不在树中，其清空/重载机制完全不涉及。
   Future<void> _preDecodeAfterLoad(String targetUrl) async {
-    if (targetUrl.isEmpty || _decodedImage != null) return;
+    // 已成功预解码过的 url 跳过（去重）；失败时不置位，网络重试加载
+    // 成功后允许再次尝试（缓存可能已被其他页面写入）
+    if (targetUrl.isEmpty ||
+        _decodedImage != null ||
+        _cacheCheckedUrl == targetUrl) {
+      return;
+    }
+    // 在异步操作前取显示宽度与缩放（await 后 context 可能已 unmount，
+    // 此时 MediaQuery.of 在 debug 下会抛错）
+    final double scale = MediaQuery.of(context).devicePixelRatio;
+    final double? displayWidth = width;
+    final int? targetWidth =
+        displayWidth == null ? null : (displayWidth * scale).round();
     try {
       final resolvedUrl = PixivImageSource.resolve(
         targetUrl,
@@ -178,18 +200,27 @@ class _PixivImageState extends State<PixivImage> {
           mounted &&
           url == targetUrl &&
           _decodedImage == null) {
-        final bytes = fileInfo.file.readAsBytesSync();
+        // 异步读取，避免同步 IO 阻塞 UI 线程（原图可达 5~20MB）
+        final bytes = await fileInfo.file.readAsBytes();
         if (bytes.isNotEmpty) {
-          final image = await decodeImageFromList(bytes);
-          if (mounted && url == targetUrl && _decodedImage == null) {
-            setState(() => _decodedImage = image);
-          } else {
-            image.dispose();
+          final codec =
+              await ui.instantiateImageCodec(bytes, targetWidth: targetWidth);
+          try {
+            final frame = await codec.getNextFrame();
+            final image = frame.image;
+            if (mounted && url == targetUrl && _decodedImage == null) {
+              _cacheCheckedUrl = targetUrl; // 仅成功后置位，失败允许重试
+              setState(() => _decodedImage = image);
+            } else {
+              image.dispose();
+            }
+          } finally {
+            codec.dispose();
           }
         }
       }
     } catch (_) {
-      // 解码失败：保持现有加载流程
+      // 解码失败：保持现有加载流程（不置位，允许后续重试）
     }
   }
 
@@ -203,6 +234,7 @@ class _PixivImageState extends State<PixivImage> {
       }
       _retryCount = 0;
       _slotReleased = false;
+      _slotTimeoutCount = 0;
       _cachedBytes = null;
       _fromCache = false;
       _cacheCheckedUrl = null;
@@ -239,8 +271,13 @@ class _PixivImageState extends State<PixivImage> {
       // 代际校验：检查期间 url 可能又变了（快速连续切换），
       // 过期回调填入的字节会导致显示错误图片
       if (fileInfo != null && mounted && url == targetUrl && _cachedBytes == null) {
-        final bytes = fileInfo.file.readAsBytesSync();
-        if (bytes.isNotEmpty) {
+        // 异步读取，避免同步 IO 阻塞 UI 线程
+        final bytes = await fileInfo.file.readAsBytes();
+        // 代际校验：异步读取期间 url 可能已切换，复检后才能填入字节
+        if (bytes.isNotEmpty &&
+            mounted &&
+            url == targetUrl &&
+            _cachedBytes == null) {
           setState(() {
             _cachedBytes = Uint8List.fromList(bytes);
             _fromCache = true;
@@ -264,6 +301,7 @@ class _PixivImageState extends State<PixivImage> {
     );
     if (granted) {
       _slotReleased = false;
+      _slotTimeoutCount = 0;
       _startSlotTimer();
       if (mounted) setState(() => _canLoad = true);
     }
@@ -278,12 +316,21 @@ class _PixivImageState extends State<PixivImage> {
     _slotTimer = Timer(const Duration(seconds: 30), _onSlotTimeout);
   }
 
-  /// 槽位超时：释放当前槽位并强制重试
+  /// 槽位超时：释放当前槽位并强制重试。
+  /// 连续超时达到上限后停止重排，改走默认 CachedNetworkImage 加载流程，
+  /// 网络故障时由 errorWidget/手动重试接管，避免无限"排队→超时→重排"循环。
   void _onSlotTimeout() {
     if (!mounted) return;
     _coordinator.release(widget.url);
     _slotReleased = true;
     _slotTimer = null;
+    _slotTimeoutCount++;
+    if (_slotTimeoutCount >= _maxSlotTimeouts) {
+      // 达到连续超时上限：放行默认加载流程（失败时显示错误提示与重试按钮）
+      _canLoad = true;
+      setState(() {});
+      return;
+    }
     _canLoad = false;
     _retryCount = 0;
     if (mounted) {
@@ -303,8 +350,10 @@ class _PixivImageState extends State<PixivImage> {
       );
       final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
       if (fileInfo != null && mounted && !_canLoad) {
-        final bytes = fileInfo.file.readAsBytesSync();
-        if (bytes.isNotEmpty) {
+        // 异步读取，避免同步 IO 阻塞 UI 线程
+        final bytes = await fileInfo.file.readAsBytes();
+        // 代际校验：异步读取期间 url 可能已切换，复检后才能放行
+        if (bytes.isNotEmpty && mounted && url == targetUrl) {
           // 缓存命中：取消排队并放行加载。fluent 版无"方案 B"分支，
           // 走 CachedNetworkImage 时文件缓存命中几乎瞬间完成（<200ms），
           // 不会触发 placeholder 动画
@@ -322,6 +371,7 @@ class _PixivImageState extends State<PixivImage> {
     if (!mounted) return;
     if (_registeredUrl != widget.url) return;
     _slotReleased = false;
+    _slotTimeoutCount = 0;
     _startSlotTimer();
     setState(() => _canLoad = true);
   }
@@ -440,11 +490,9 @@ class _PixivImageState extends State<PixivImage> {
       imageBuilder: (context, imageProvider) {
         _releaseSlot();
         // 加载完成：后台预解码文件缓存，完成后 RawImage 直显，
-        // 返回页面时零窗口（免疫 ImageCache 逐出导致的重新加载白屏）
-        if (_cacheCheckedUrl != url) {
-          _cacheCheckedUrl = url;
-          _preDecodeAfterLoad(widget.url);
-        }
+        // 返回页面时零窗口（免疫 ImageCache 逐出导致的重新加载白屏）。
+        // 去重与失败重试由 _preDecodeAfterLoad 内部管理（仅成功置位）
+        _preDecodeAfterLoad(widget.url);
         return Image(
           image: imageProvider,
           fit: fit ?? BoxFit.fitWidth,

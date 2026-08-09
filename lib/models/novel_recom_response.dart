@@ -100,6 +100,55 @@ class Novel {
   });
 
   factory Novel.fromJson(Map<String, dynamic> json) => _$NovelFromJson(json);
+
+  /// 从本地持久化历史恢复小说元数据（历史记录仅保存少量字段）。
+  ///
+  /// 完整 API 模型无法满足时用默认值补齐；字段映射集中在此工厂，
+  /// 上游模型新增/变更字段时只需改这一处，避免调用方散落硬编码构造。
+  factory Novel.fromPersist({
+    required int id,
+    required String title,
+    required int userId,
+    required String userName,
+    required String pictureUrl,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    return Novel.fromJson({
+      // 注意：id 必须是 num（fromJson 用 `as num` 强转，传 String 会抛 TypeError）
+      'id': id,
+      'title': title,
+      'caption': '',
+      'restrict': 0,
+      'x_restrict': 0,
+      'is_original': false,
+      'image_urls': {
+        'square_medium': pictureUrl,
+        'medium': pictureUrl,
+        'large': pictureUrl,
+      },
+      'create_date': now,
+      'tags': <Map<String, dynamic>>[],
+      'page_count': 1,
+      'text_length': 0,
+      'user': {
+        'id': userId,
+        'name': userName,
+        'account': '',
+        'profile_image_urls': {'medium': ''},
+        'is_followed': false,
+      },
+      'series': <String, dynamic>{},
+      'is_bookmarked': false,
+      'total_bookmarks': 0,
+      'total_view': 0,
+      'visible': true,
+      'total_comments': 0,
+      'is_muted': false,
+      'is_mypixiv_only': false,
+      'is_x_restricted': false,
+      'novel_ai_type': 0,
+    });
+  }
 }
 
 @JsonSerializable()

@@ -77,6 +77,9 @@ class _LightingListState extends State<LightingList> {
   static int _instanceCounter = 0;
   final int _instanceId = _instanceCounter++;
 
+  // 本列表独立的图片加载协调器：可视范围与队列不与其他页面互相干扰
+  late final ImageLoadCoordinator _coordinator = ImageLoadCoordinator.create();
+
   late LightingStore _store;
   late bool _isNested;
   late ScrollController _scrollController;
@@ -140,7 +143,7 @@ class _LightingListState extends State<LightingList> {
     final end = ((pixels + viewport) / approxItemHeight)
         .ceil()
         .clamp(0, _store.iStores.length);
-    ImageLoadCoordinator.instance.updateVisibleRange(start, end);
+    _coordinator.updateVisibleRange(start, end);
   }
 
   void _onScrollUpdate() {
@@ -167,12 +170,16 @@ class _LightingListState extends State<LightingList> {
     _backToTopNotifier.dispose();
     _store.dispose();
     _refreshController.dispose();
+    _coordinator.dispose(); // 释放独立协调器的定时器与队列
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    // 列表作用域：子树中的 PixivImage 使用本列表独立的协调器实例
+    return ImageCoordinatorScope(
+      coordinator: _coordinator,
+      child: Stack(
       children: [
         Observer(builder: (_) {
           return _buildContent(context);
@@ -192,6 +199,7 @@ class _LightingListState extends State<LightingList> {
           },
         ),
       ],
+      ),
     );
   }
 

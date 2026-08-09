@@ -5,12 +5,19 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
-import 'package:pixez/component/pixiv_image.dart';
+import 'package:pixez/constants.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/er/prefer.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/onezero_response.dart';
 import 'package:rhttp/rhttp.dart' as r;
+
+/// TCP 探测结果缓存条目（TTL 5 分钟）
+class _ProbeCacheEntry {
+  final DateTime time;
+  final List<String> alive;
+  _ProbeCacheEntry(this.time, this.alive);
+}
 
 class Hoster {
   static Map<String, dynamic> _map = Map();
@@ -76,7 +83,20 @@ class Hoster {
 
   static Dio httpClient = Dio(BaseOptions(baseUrl: 'https://1dot1dot1dot1.cloudflare-dns.com'));
 
-  static Future<Dio> createDioClient() async {
+  /// 共享的 DoH 客户端创建 Future：并发/重复调用只创建一次 rhttp client。
+  /// 每次调用都新建 client 会反复替换 adapter，旧 client 无人 close 造成
+  /// 资源泄漏（每次启动 dnsQueryAll 即泄漏 3 个）。
+  static Future<Dio>? _dohClientFuture;
+
+  static Future<Dio> createDioClient() {
+    return _dohClientFuture ??= _createDohClient().catchError((Object e) {
+      // 创建失败时重置，允许后续调用重试（避免永久持有 failed Future）
+      _dohClientFuture = null;
+      throw e;
+    });
+  }
+
+  static Future<Dio> _createDohClient() async {
     final compatibleClient = await r.RhttpCompatibleClient.create(
       settings: r.ClientSettings(
         dnsSettings: r.DnsSettings.static(
@@ -101,16 +121,9 @@ class Hoster {
     }
   }
 
-  static Future<void> dnsQueryFetcher() async {
-    for (var key in [
-      ImageHost,
-      ImageSHost,
-      'app-api.pixiv.net',
-      'oauth.secure.pixiv.net',
-    ]) {
-      await dnsQuery(key);
-    }
-  }
+  /// 后台 isolate 预热入口（逻辑与 [dnsQueryAll] 完全相同，
+  /// 统一委托避免重复实现）
+  static Future<void> dnsQueryFetcher() => dnsQueryAll();
 
   static Future<void> initMap() async {
     try {
@@ -204,6 +217,33 @@ class Hoster {
         alive.add(ip);
       } catch (_) {}
     }));
+    return alive;
+  }
+
+  /// TCP 探测结果缓存：同一 IP 组合在 TTL 内不重复探测。
+  /// 解决瀑布流滚动时每个请求都做 7~17 次探测的问题；
+  /// 网络故障时的空结果也被缓存，避免每次请求都阻塞等待探测超时。
+  static final Map<String, _ProbeCacheEntry> _probeCache = {};
+  static const Duration _probeCacheTtl = Duration(minutes: 5);
+  static const int _probeCacheMaxEntries = 64;
+
+  /// 带缓存的探测（结果与 IP 顺序无关）
+  static Future<List<String>> tcpProbeCached(
+    List<String> ips, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    if (ips.isEmpty) return const [];
+    final key = ([...ips]..sort()).join(',');
+    final entry = _probeCache[key];
+    if (entry != null &&
+        DateTime.now().difference(entry.time) < _probeCacheTtl) {
+      return entry.alive;
+    }
+    final alive = await tcpProbe(ips, timeout: timeout);
+    if (_probeCache.length >= _probeCacheMaxEntries) {
+      _probeCache.clear(); // 超限整体清空，简单防膨胀
+    }
+    _probeCache[key] = _ProbeCacheEntry(DateTime.now(), alive);
     return alive;
   }
 

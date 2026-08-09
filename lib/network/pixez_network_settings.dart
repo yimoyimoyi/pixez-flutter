@@ -48,17 +48,20 @@ class PixezNetworkSettings {
       dnsSettings: r.DnsSettings.dynamic(
         resolver: (host) async {
           try {
-            // 第 1 层：硬编码 IP 池（实测可用，最快）
+            // 第 1 层：硬编码 IP 池（实测可用，最快）。
+            // 探测结果带 5 分钟 TTL 缓存，避免每个请求重复探测
             final pool = _poolFor(host);
             if (pool.isNotEmpty) {
-              final alive = await Hoster.tcpProbe(pool);
+              final alive = await Hoster.tcpProbeCached(pool);
               if (alive.isNotEmpty) return alive;
             }
 
-            // 第 2 层：DoH 动态缓存（跨代理预热，自动适应 IP 迁移）
-            final cached = Hoster.cachedIps(host);
+            // 第 2 层：DoH 动态缓存（跨代理预热，自动适应 IP 迁移）。
+            // 过滤掉池中已探测失败的 IP，避免对死 IP 重复探测白耗时间
+            final cached =
+                Hoster.cachedIps(host).where((ip) => !pool.contains(ip)).toList();
             if (cached.isNotEmpty) {
-              final alive = await Hoster.tcpProbe(cached);
+              final alive = await Hoster.tcpProbeCached(cached);
               if (alive.isNotEmpty) return alive;
             }
 

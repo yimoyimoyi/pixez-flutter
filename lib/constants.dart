@@ -16,6 +16,13 @@
 
 import 'dart:io';
 
+/// Pixiv 图片源站主机常量。
+/// 原定义于 pixiv_image.dart，后移到独立文件以消除
+/// hoster.dart ↔ pixiv_image.dart 的循环依赖。
+const ImageHost = "i.pximg.net";
+const ImageCatHost = "i.pixiv.re";
+const ImageSHost = "s.pximg.net";
+
 class Constants {
   static const String no_h = 'assets/images/h_long.jpg';
   static String tagName = "0.9.104";

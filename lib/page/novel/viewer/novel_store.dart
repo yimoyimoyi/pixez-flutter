@@ -157,11 +157,24 @@ abstract class _NovelStoreBase with Store {
     }
   }
 
+  /// 正文缓存 TTL：超过 30 天的缓存视为过期，读取时删除（防止磁盘无限增长）
+  static const Duration _cacheTtl = Duration(days: 30);
+
   /// 从本地缓存加载小说正文
   Future<bool> _loadNovelTextFromCache() async {
     try {
       final file = await _novelTextCacheFile();
       if (!await file.exists()) return false;
+      // 过期清理：超过 TTL 的缓存视为无效并删除
+      try {
+        final modified = await file.lastModified();
+        if (DateTime.now().difference(modified) > _cacheTtl) {
+          await file.delete();
+          return false;
+        }
+      } catch (_) {
+        // 读取修改时间失败不阻断加载（保守处理：允许继续读）
+      }
       final json = await file.readAsString();
       novelTextResponse = NovelWebResponse.fromJson(jsonDecode(json));
       spans = await compute(buildSpans, novelTextResponse!);
@@ -185,7 +198,8 @@ abstract class _NovelStoreBase with Store {
     }
   }
 
-  /// 从历史记录恢复小说元数据（方案 C）
+  /// 从历史记录恢复小说元数据（方案 C）。
+  /// 字段映射集中在 [Novel.fromPersist] 工厂中，此处只传历史记录的少量字段
   Future<Novel?> _restoreNovelFromHistory() async {
     try {
       await novelHistoryStore.novelPersistProvider.open();
@@ -193,43 +207,13 @@ abstract class _NovelStoreBase with Store {
       final match = all.where((p) => p.novelId == id).toList();
       if (match.isNotEmpty) {
         final p = match.first;
-        // Novel.fromJson 对绝大多数字段做严格非空转换，必须补齐全部必填字段
-        final now = DateTime.now().toIso8601String();
-        return Novel.fromJson({
-          // 注意：id 必须是 num（fromJson 用 `as num` 强转，传 String 会抛 TypeError）
-          'id': p.novelId,
-          'title': p.title,
-          'caption': '',
-          'restrict': 0,
-          'x_restrict': 0,
-          'is_original': false,
-          'image_urls': {
-            'square_medium': p.pictureUrl,
-            'medium': p.pictureUrl,
-            'large': p.pictureUrl,
-          },
-          'create_date': now,
-          'tags': <Map<String, dynamic>>[],
-          'page_count': 1,
-          'text_length': 0,
-          'user': {
-            'id': p.userId,
-            'name': p.userName,
-            'account': '',
-            'profile_image_urls': {'medium': ''},
-            'is_followed': false,
-          },
-          'series': <String, dynamic>{},
-          'is_bookmarked': false,
-          'total_bookmarks': 0,
-          'total_view': 0,
-          'visible': true,
-          'total_comments': 0,
-          'is_muted': false,
-          'is_mypixiv_only': false,
-          'is_x_restricted': false,
-          'novel_ai_type': 0,
-        });
+        return Novel.fromPersist(
+          id: p.novelId,
+          title: p.title,
+          userId: p.userId,
+          userName: p.userName,
+          pictureUrl: p.pictureUrl,
+        );
       }
     } catch (e) {
       print('_restoreNovelFromHistory error: $e');
@@ -265,7 +249,10 @@ abstract class _NovelStoreBase with Store {
         positionBooked = true;
         bookedOffset = result.offset;
       }
-    } catch (e) {}
+    } catch (e) {
+      // DB 读取失败仅影响阅读位置恢复，保留日志便于排查
+      LPrinter.d("fetchOffset error: $e");
+    }
   }
 }
 

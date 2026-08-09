@@ -21,6 +21,7 @@ import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:mobx/mobx.dart';
 import 'package:html/parser.dart' show parse;
 import 'package:pixez/er/hoster.dart';
+import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:rhttp/rhttp.dart' as r;
@@ -49,7 +50,7 @@ abstract class _SoupStoreBase with Store {
   bool isLoading = false;
 
   void _log(String msg) {
-    print('SoupStore: $msg');
+    LPrinter.d('SoupStore: $msg');
     // 限制日志长度（调试面板展示用），防止无限增长
     logText = '${logText}$msg\n';
     if (logText.length > 4000) {
@@ -68,7 +69,7 @@ abstract class _SoupStoreBase with Store {
       try {
         client.close();
       } catch (e) {
-        print('SoupStore close error: $e');
+        LPrinter.d('SoupStore close error: $e');
       }
     }
   }

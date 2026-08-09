@@ -117,9 +117,26 @@ class _DataExportPageState extends State<DataExportPage> {
             Directory tempDir = await getTemporaryDirectory();
             tempDir.deleteSync(recursive: true);
             cleanGlanceData();
+            await cleanNovelTextCache();
           } catch (e) {}
         }
         break;
+    }
+  }
+
+  /// 清理小说正文缓存目录（与 Material 端行为对齐）。
+  /// 此前 Fluent 端无任何入口可清理 novel_text_cache，长期使用会累积
+  /// 数十至上百 MB 磁盘占用（每篇正文 JSON 约 50~200KB）
+  Future<void> cleanNovelTextCache() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final cacheDir = Directory('${dir.path}/novel_text_cache');
+      if (await cacheDir.exists()) {
+        await cacheDir.delete(recursive: true);
+      }
+    } catch (e) {
+      // 清理失败不影响其他缓存清理
+      debugPrint('cleanNovelTextCache error: $e');
     }
   }
 

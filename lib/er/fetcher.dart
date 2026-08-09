@@ -328,7 +328,7 @@ entryPoint(SendMessage message) async {
           try {
             currentPictureSource = taskBean.source ?? pictureSource;
             currentNetworkMode = taskBean.networkMode ?? message.networkMode;
-            print("========taskBean.savePath: ${taskBean.savePath}");
+            LPrinter.d("taskBean.savePath: ${taskBean.savePath}");
             var savePath =
                 taskBean.savePath! +
                 Platform.pathSeparator +

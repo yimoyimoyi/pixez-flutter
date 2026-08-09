@@ -14,6 +14,7 @@
 /// - 泄漏会导致所有后续图片永久排队
 
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 
 class _LoadEntry implements Comparable<_LoadEntry> {
   final String url;
@@ -45,8 +46,33 @@ class ImageLoadCoordinator {
   /// 槽位超时（秒）
   static const int slotTimeoutSeconds = 30;
 
+  /// 全局回退实例（无列表作用域的 PixivImage 使用，如非列表场景）
   static final ImageLoadCoordinator instance = ImageLoadCoordinator._();
+
+  /// 创建独立实例：每个列表页持有一个，隔离可视范围与队列状态，
+  /// 避免多页面共享全局状态导致优先级错乱与队列饥饿。
+  /// 页面销毁时应调用 [dispose] 释放
+  factory ImageLoadCoordinator.create() => ImageLoadCoordinator._();
+
   ImageLoadCoordinator._();
+
+  /// 从列表作用域取协调器：子树中存在 [ImageCoordinatorScope] 时使用
+  /// 独立实例，否则回退全局实例
+  static ImageLoadCoordinator of(BuildContext context) {
+    final scope =
+        context.getInheritedWidgetOfExactType<ImageCoordinatorScope>();
+    return scope?.coordinator ?? instance;
+  }
+
+  /// 释放实例占用的定时器与队列（页面 dispose 时调用）。
+  /// 实例不再使用时不会残留周期定时器与排队项
+  void dispose() {
+    _cleanupTimer?.cancel();
+    _cleanupTimer = null;
+    _activeSlots.clear();
+    _activeUrls.clear();
+    _queue.clear();
+  }
 
   final List<_ActiveSlot> _activeSlots = [];
   final Set<String> _activeUrls = {};
@@ -168,4 +194,25 @@ class ImageLoadCoordinator {
   /// 调试用
   int get activeCount => _activeSlots.length;
   int get queueLength => _queue.length;
+}
+
+/// 列表作用域：为子树中的 PixivImage 提供独立的图片加载协调器实例。
+///
+/// 每个列表页（LightingList 等）在 build 时包一层，其可视范围与排队
+/// 状态独立于其他页面，避免：
+/// - 一个页面的 `updateVisibleRange()` 改变全局可视范围，干扰其他页面优先级
+/// - 不同列表 index 语义混用（瀑布流 index vs 搜索列表 index）
+/// - 一个页面槽位不释放导致其他页面图片永久排队
+class ImageCoordinatorScope extends InheritedWidget {
+  final ImageLoadCoordinator coordinator;
+
+  const ImageCoordinatorScope({
+    super.key,
+    required this.coordinator,
+    required super.child,
+  });
+
+  @override
+  bool updateShouldNotify(ImageCoordinatorScope oldWidget) =>
+      coordinator != oldWidget.coordinator;
 }

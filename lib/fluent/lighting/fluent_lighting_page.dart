@@ -72,6 +72,8 @@ class _LightingListState extends State<LightingList> {
   late LightingStore _store;
   late bool _isNested;
   late ScrollController _scrollController;
+  // 本列表独立的图片加载协调器：可视范围与队列不与其他页面互相干扰
+  late ImageLoadCoordinator _coordinator;
 
   @override
   void didUpdateWidget(LightingList oldWidget) {
@@ -108,6 +110,8 @@ class _LightingListState extends State<LightingList> {
     if (widget.scrollController == null && !_isNested) {
       _scrollController.addListener(_onScrollUpdate);
     }
+    // 本列表独立的图片加载协调器：可视范围与队列不与其他页面互相干扰
+    _coordinator = ImageLoadCoordinator.create();
     // 回顶按钮：Timer 轮询（嵌套页面用 PrimaryScrollController）
     _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
       if (!mounted) return;
@@ -153,7 +157,7 @@ class _LightingListState extends State<LightingList> {
         ((pixels + metrics.viewportDimension) / approxItemHeight)
             .ceil()
             .clamp(0, _store.iStores.length);
-    ImageLoadCoordinator.instance.updateVisibleRange(start, end);
+    _coordinator.updateVisibleRange(start, end);
   }
 
   bool _onScrollNotify(ScrollNotification notification) {
@@ -174,12 +178,16 @@ class _LightingListState extends State<LightingList> {
     _backToTopNotifier.dispose();
     _store.dispose();
     _refreshController.dispose();
+    _coordinator.dispose(); // 释放独立协调器的定时器与队列
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    // 列表作用域：子树中的 PixivImage 使用本列表独立的协调器实例
+    return ImageCoordinatorScope(
+      coordinator: _coordinator,
+      child: Stack(
       children: [
         Observer(builder: (_) {
           return _buildContent(context);
@@ -209,6 +217,7 @@ class _LightingListState extends State<LightingList> {
           },
         ),
       ],
+      ),
     );
   }
 

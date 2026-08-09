@@ -50,11 +50,12 @@ import 'package:flutter/painting.dart' show PaintingBinding;
 /// 调优 Flutter ImageCache：增大图片内存缓存上限，
 /// 减少浏览 Pixiv 大图时的缓存抖动和解码次数。
 /// 按设备内存分级：≥4GB 用 200MB，低内存设备降为 100MB 防 OOM。
-void _tuneImageCache() {
+Future<void> _tuneImageCache() async {
   int? memBytes;
   if (Platform.isAndroid) {
     try {
-      final result = Process.runSync('cat', ['/proc/meminfo']);
+      // 异步执行，避免启动时同步阻塞主线程
+      final result = await Process.run('cat', ['/proc/meminfo']);
       final meminfo = result.stdout.toString();
       final match = RegExp(r'MemTotal:\s+(\d+) kB').firstMatch(meminfo);
       if (match != null) memBytes = int.parse(match.group(1)!) * 1024;
@@ -83,7 +84,7 @@ main(List<String> args) async {
   await Rhttp.init();
   await MmapCache.init();
   WidgetsFlutterBinding.ensureInitialized();
-  _tuneImageCache();
+  await _tuneImageCache();
 
   if (Platform.isWindows || Platform.isLinux) {
     // sqflite ffi init
