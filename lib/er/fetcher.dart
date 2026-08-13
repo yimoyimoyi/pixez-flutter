@@ -298,7 +298,16 @@ entryPoint(SendMessage message) async {
     ),
   );
   dio.httpClientAdapter = ConversionLayerAdapter(client);
-  DioCacheManager.initialize(dio);
+  // 与主 isolate 浏览缓存共享同一磁盘缓存（同 'dioCache' 目录 + URL 原文 key）：
+  // 下载优先读取浏览缓存命中文件，下载成功自动回填，实现浏览⇄下载双向共享。
+  // 注意：Dart isolate 间静态变量不共享，主 isolate 的 pixivCacheManager 在此恒为
+  // null，必须在本 isolate 内重建（参数与主 isolate Config 保持一致：500 对象/30 天）。
+  pixivCacheManager = CacheManager(Config(
+    'dioCache',
+    fileService: DioHttpFileService(dio),
+    maxNrOfCacheObjects: 500,
+    stalePeriod: Duration(days: 30),
+  ));
   ReceivePort receivePort = ReceivePort();
   sendPort.send(
     IsoContactBean(state: IsoTaskState.INIT, data: receivePort.sendPort),
@@ -399,6 +408,21 @@ entryPoint(SendMessage message) async {
                     final file = File(savePath);
                     if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
                     await file.writeAsBytes(resp.data!);
+                    // 回填浏览缓存：下载成功即写入，之后浏览/再次下载直接命中
+                    try {
+                      final uri = Uri.tryParse(taskBean.url!);
+                      final path = uri?.path ?? '';
+                      final dot = path.lastIndexOf('.');
+                      final fileExtension =
+                          dot == -1 ? null : path.substring(dot + 1);
+                      await pixivCacheManager?.putFile(
+                        taskBean.url!,
+                        Uint8List.fromList(resp.data!),
+                        fileExtension: fileExtension ?? 'jpg',
+                      );
+                    } catch (e) {
+                      LPrinter.d("fetcher cache write-back failed: $e");
+                    }
                     success = true;
                     sendPort.send(IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean));
                     break;

@@ -20,18 +20,13 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:dio/dio.dart';
-import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:fluent_ui/fluent_ui.dart';
-import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
-import 'package:pixez/constants.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:pixez/component/pixiv_image.dart' as material_image;
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/main.dart';
-import 'package:pixez/network/network_mode.dart';
-import 'package:pixez/network/pixez_network_settings.dart';
-import 'package:rhttp/rhttp.dart' as r;
 
 // 主机常量定义在 constants.dart（消除 hoster ↔ pixiv_image 循环依赖），
 // 经此 export 保持旧引用（网络设置页等）无需改动
@@ -41,7 +36,12 @@ export 'package:pixez/constants.dart' show ImageHost, ImageCatHost, ImageSHost;
 // 实现CacheManager和混入ImageCacheManager缺一不可
 // 如果你恰好看到这个实现方法实例，且对你有些帮助或者启发：
 // 听一首Mili-Salt, Pepper, Birds, And the Thought Police吧 🎵
-DioCacheManager? pixivCacheManager = DioCacheManager.instance;
+/// 与 material 分支共享同一缓存实例（主 isolate 由 user_setting 初始化）。
+/// 两分支同属 flutter_cache_manager 体系（'dioCache' 目录 + URL 原文 key），
+/// 此前 fluent 版独立引用 DioCacheManager.instance 且主 isolate 从未 initialize，
+/// 一旦 fluent 页面访问即抛 LateInitializationError；转发 material 实例后
+/// 磁盘/内存缓存完全一致，fluent 与 material 浏览互相命中。
+CacheManager? get pixivCacheManager => material_image.pixivCacheManager;
 
 class PixivImage extends StatefulWidget {
   final String url;
@@ -71,42 +71,6 @@ class PixivImage extends StatefulWidget {
 
   @override
   _PixivImageState createState() => _PixivImageState();
-
-  static Dio? _cacheDio;
-
-  static Future<void> generatePixivCache() async {
-    final client = await r.RhttpCompatibleClient.createSync(
-      settings: PixezNetworkSettings.forImages(
-        userSetting.pictureSource,
-        userSetting.networkMode,
-      ),
-    );
-    final existing = _cacheDio;
-    if (existing != null) {
-      existing.httpClientAdapter = ConversionLayerAdapter(client);
-      return;
-    }
-    final dio = Dio();
-    dio.interceptors.add(
-      PixivImageSourceInterceptor(
-        networkMode: () => userSetting.networkMode,
-        pictureSource: () => userSetting.pictureSource,
-      ),
-    );
-    dio.interceptors.add(LogInterceptor(responseBody: false));
-    dio.httpClientAdapter = ConversionLayerAdapter(client);
-    _cacheDio = dio;
-    DioCacheManager.initialize(dio);
-    _warmUpWorker(dio);
-  }
-
-  static void _warmUpWorker(Dio dio) {
-    if (userSetting.pictureSource == ImageHost) return;
-    final source = userSetting.pictureSource;
-    if (source == null || source.isEmpty) return;
-    final warmUrl = source.startsWith('http') ? source : 'https://$source';
-    dio.head(warmUrl).then((_) {}).catchError((_) {});
-  }
 }
 
 class _PixivImageState extends State<PixivImage> {
