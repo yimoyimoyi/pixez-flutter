@@ -343,5 +343,6 @@
   "network_mode_standard": "标准连接",
   "network_mode_standard_message": "大多数网络环境推荐使用。",
   "ignore_current_version_update": "忽略当前版本更新",
-  "haptic_feedback": "触感反馈"
+  "haptic_feedback": "触感反馈",
+  "automatically_tag_when_bookmarking": "收藏时自动添加标签"
 }

@@ -93,7 +93,7 @@
   },
   "muti_choice_save": "Seçilenleri kaydet",
   "my": "Benim",
-    "need_to_restart_app": "Uygulamayı yeniden başlatman gerekiyor",
+  "need_to_restart_app": "Uygulamayı yeniden başlatman gerekiyor",
   "news": "Aktiviteler",
   "new_password": "Yeni şifre",
   "new_version_update_information": "Sürüm Notları",
@@ -103,7 +103,7 @@
   "no_more_data": "Daha fazla veri yok",
   "not_bookmarked": "Favorilere eklenmedi",
   "ok": "Tamam",
- "painter": "Çizer",
+  "painter": "Çizer",
   "painter_id": "Çizer ID",
   "painter_name": "Çizer adı",
   "partial_match_for_tag": "Kısmi eşleşen etiketler",
@@ -343,5 +343,6 @@
   "network_mode_ech_message": "Uygulama açıldığı halde sunucu yanıtı başarısız olursa bunu dene.",
   "network_mode_standard": "Standart bağlantı",
   "network_mode_standard_message": "Çoğu ağ için önerilir.",
-  "ignore_current_version_update": "Mevcut sürüm güncellemesini yoksay"
+  "ignore_current_version_update": "Mevcut sürüm güncellemesini yoksay",
+  "haptic_feedback": "Dokunsal geri bildirim"
 }

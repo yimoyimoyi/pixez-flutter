@@ -343,5 +343,6 @@
   "network_mode_standard": "Standard connection",
   "network_mode_standard_message": "Recommended for most networks.",
   "ignore_current_version_update": "Ignore current version update",
-  "haptic_feedback": "Haptic feedback"
+  "haptic_feedback": "Haptic feedback",
+  "automatically_tag_when_bookmarking": "Automatically tag when bookmarking"
 }

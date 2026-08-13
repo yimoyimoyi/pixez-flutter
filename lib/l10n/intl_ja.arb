@@ -343,5 +343,6 @@
   "network_mode_standard": "Standard connection",
   "network_mode_standard_message": "Recommended for most networks.",
   "ignore_current_version_update": "Ignore current version update",
-  "haptic_feedback": "触覚フィードバック"
+  "haptic_feedback": "触覚フィードバック",
+  "automatically_tag_when_bookmarking": "ブックマーク時にタグを自動追加"
 }
