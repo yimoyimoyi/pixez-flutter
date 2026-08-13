@@ -331,6 +331,7 @@ class _IllustCardState extends State<IllustCard> {
   }
 
   Future<void> _buildInkTap(BuildContext context, String heroTag) async {
+    HapticUtil.selectionClick();
     await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
         builder: (_) {

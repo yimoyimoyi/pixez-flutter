@@ -25,7 +25,7 @@ const ImageSHost = "s.pximg.net";
 
 class Constants {
   static const String no_h = 'assets/images/h_long.jpg';
-  static String tagName = "0.9.104";
+  static String tagName = "0.9.106";
   static const isGooglePlay =
       bool.fromEnvironment("IS_GOOGLEPLAY", defaultValue: false);
   static int type = 0;
