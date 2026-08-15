@@ -120,13 +120,18 @@ class PixivImageSourceInterceptor extends Interceptor {
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    options.path = PixivImageSource.resolveUri(
+    final resolvedUri = PixivImageSource.resolveUri(
       options.uri,
       networkMode: networkMode(),
       pictureSource: pictureSource(),
-    ).toString();
+    );
+    options.path = resolvedUri.toString();
     options.baseUrl = '';
-    options.queryParameters.clear();
+    if (resolvedUri.hasQuery) {
+      options.queryParameters.addAll(resolvedUri.queryParameters);
+    } else {
+      options.queryParameters.clear();
+    }
     handler.next(options);
   }
 }

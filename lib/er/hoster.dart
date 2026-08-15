@@ -104,8 +104,11 @@ class Hoster {
             "1dot1dot1dot1.cloudflare-dns.com": ['104.16.248.249', '104.16.249.249'],
           },
         ),
-      )
+      ),
     );
+    try {
+      httpClient.httpClientAdapter.close(force: true);
+    } catch (_) {}
     httpClient.httpClientAdapter = ConversionLayerAdapter(compatibleClient);
     return httpClient;
   }
@@ -207,7 +210,7 @@ class Hoster {
   /// TCP 443 端口探测，筛出可连通的 IP（无须代理无须 DNS）
   static Future<List<String>> tcpProbe(
     List<String> ips, {
-    Duration timeout = const Duration(seconds: 2),
+    Duration timeout = const Duration(milliseconds: 600),
   }) async {
     final alive = <String>[];
     await Future.wait(ips.map((ip) async {

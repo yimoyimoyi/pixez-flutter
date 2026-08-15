@@ -138,6 +138,11 @@ class AccountClient {
         userSetting.oauthNetworkMode,
       ),
     );
+    if (_httpClient != null) {
+      try {
+        _httpClient!.httpClientAdapter.close(force: true);
+      } catch (_) {}
+    }
     dio.httpClientAdapter = ConversionLayerAdapter(compatibleClient);
     _httpClient = dio;
     if (Platform.isAndroid) {

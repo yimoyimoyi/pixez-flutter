@@ -23,24 +23,37 @@ import 'package:pixez/network/api_client.dart';
 import 'package:pixez/network/oauth_client.dart';
 
 class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
+  static Completer<void>? _refreshCompleter;
+
   Future<String?> getToken() async {
-    String? token = accountStore.now?.accessToken; //可能读的时候没有错的快，导致now为null
-    String result;
-    if (token != null)
-      result = "Bearer " + token;
-    else {
-      AccountProvider accountProvider = AccountProvider();
-      await accountProvider.open();
-      final all = await accountProvider.getAllAccount();
-      if (all.isEmpty) return null;
-      result = "Bearer " + all[accountStore.index].accessToken;
+    String? token = accountStore.now?.accessToken;
+    if (token != null && token.isNotEmpty) {
+      return "Bearer " + token;
+    } else {
+      try {
+        AccountProvider accountProvider = AccountProvider();
+        await accountProvider.open();
+        final all = await accountProvider.getAllAccount();
+        if (all.isEmpty) return null;
+        final index = accountStore.index;
+        if (index < 0 || index >= all.length) {
+          return "Bearer " + all.first.accessToken;
+        }
+        return "Bearer " + all[index].accessToken;
+      } catch (e) {
+        return null;
+      }
     }
-    return result;
   }
 
   @override
   Future<void> onRequest(
       RequestOptions options, RequestInterceptorHandler handler) async {
+    // 动态生成最新 X-Client-Time 和 X-Client-Hash
+    final time = ApiClient.getIsoDate();
+    options.headers["X-Client-Time"] = time;
+    options.headers["X-Client-Hash"] = ApiClient.getHash(time + apiClient.hashSalt);
+
     if (!options.path.contains('v1/walkthrough/illusts')) {
       options.headers[OAuthClient.AUTHORIZATION] = await getToken();
       if (options.headers[OAuthClient.AUTHORIZATION] == null) {
@@ -67,75 +80,92 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
     return handler.next(response);
   }
 
-  bool isRefreshing = false;
-
   @override
   void onError(DioException err, handler) async {
     if (err.response != null && err.response!.statusCode == 400) {
-      DateTime dateTime = DateTime.now();
-      if ((dateTime.millisecondsSinceEpoch - lastRefreshTime) > 200000) {
+      if (_refreshCompleter != null) {
+        // 已有处于刷新流程中的请求，等待其完成
         try {
-          print("lock start ========================");
-          ErrorMessage errorMessage = ErrorMessage.fromJson(err.response!.data);
-          if (errorMessage.error.message!.contains("OAuth") &&
-              accountStore.now != null) {
-            final client = OAuthClient();
-            await client.createDioClient();
-            AccountPersist accountPersist = accountStore.now!;
-            Response response1 = await client.postRefreshAuthToken(
-                refreshToken: accountPersist.refreshToken,
-                deviceToken: accountPersist.deviceToken);
-            AccountResponse accountResponse =
-                Account.fromJson(response1.data).response;
-            final user = accountResponse.user;
-            await accountStore.updateSingle(AccountPersist(
-                userId: user.id,
-                userImage: user.profileImageUrls.px170x170,
-                accessToken: accountResponse.accessToken,
-                refreshToken: accountResponse.refreshToken,
-                deviceToken: "",
-                passWord: "no more",
-                name: user.name,
-                account: user.account,
-                mailAddress: user.mailAddress,
-                isPremium: bti(user.isPremium),
-                xRestrict: user.xRestrict,
-                isMailAuthorized: bti(user.isMailAuthorized),
-                id: accountPersist.id));
-            lastRefreshTime = DateTime.now().millisecondsSinceEpoch;
-            print("unlock ========================");
-          } else if (errorMessage.error.message!.contains("Limit")) {
+          await _refreshCompleter!.future;
+        } catch (_) {}
+      } else {
+        DateTime dateTime = DateTime.now();
+        if ((dateTime.millisecondsSinceEpoch - lastRefreshTime) > 200000) {
+          _refreshCompleter = Completer<void>();
+          try {
+            print("lock start ========================");
+            ErrorMessage errorMessage = ErrorMessage.fromJson(err.response!.data);
+            if (errorMessage.error.message!.contains("OAuth") &&
+                accountStore.now != null) {
+              final client = OAuthClient();
+              await client.createDioClient();
+              AccountPersist accountPersist = accountStore.now!;
+              Response response1 = await client.postRefreshAuthToken(
+                  refreshToken: accountPersist.refreshToken,
+                  deviceToken: accountPersist.deviceToken);
+              AccountResponse accountResponse =
+                  Account.fromJson(response1.data).response;
+              final user = accountResponse.user;
+              await accountStore.updateSingle(AccountPersist(
+                  userId: user.id,
+                  userImage: user.profileImageUrls.px170x170,
+                  accessToken: accountResponse.accessToken,
+                  refreshToken: accountResponse.refreshToken,
+                  deviceToken: "",
+                  passWord: "no more",
+                  name: user.name,
+                  account: user.account,
+                  mailAddress: user.mailAddress,
+                  isPremium: bti(user.isPremium),
+                  xRestrict: user.xRestrict,
+                  isMailAuthorized: bti(user.isMailAuthorized),
+                  id: accountPersist.id));
+              lastRefreshTime = DateTime.now().millisecondsSinceEpoch;
+              print("unlock ========================");
+              _refreshCompleter?.complete();
+            } else {
+              lastRefreshTime = 0;
+              print("unlock ========================");
+              _refreshCompleter?.complete();
+              _refreshCompleter = null;
+              return handler.reject(err);
+            }
+          } catch (e) {
+            print(e);
             lastRefreshTime = 0;
             print("unlock ========================");
+            _refreshCompleter?.completeError(e);
+            _refreshCompleter = null;
             return handler.reject(err);
-          } else {
-            lastRefreshTime = 0;
-            print("unlock ========================");
-            return handler.reject(err);
+          } finally {
+            _refreshCompleter = null;
           }
-        } catch (e) {
-          print(e);
-          lastRefreshTime = 0;
-          print("unlock ========================");
-          return handler.reject(err);
         }
       }
       var option = err.requestOptions;
       final newToken = (await getToken());
       print("unlock retry ======================== $newToken");
       option.headers[OAuthClient.AUTHORIZATION] = newToken;
-      var response = await apiClient.httpClient.request(
-        option.path,
-        data: option.data,
-        queryParameters: option.queryParameters,
-        cancelToken: option.cancelToken,
-        options: Options(
-          method: option.method,
-          headers: option.headers,
-          contentType: option.contentType,
-        ),
-      );
-      return handler.resolve(response);
+      try {
+        var response = await apiClient.httpClient.request(
+          option.path,
+          data: option.data,
+          queryParameters: option.queryParameters,
+          cancelToken: option.cancelToken,
+          options: Options(
+            method: option.method,
+            headers: option.headers,
+            contentType: option.contentType,
+            extra: option.extra,
+          ),
+        );
+        return handler.resolve(response);
+      } catch (e) {
+        if (e is DioException) {
+          return handler.reject(e);
+        }
+        return handler.reject(err);
+      }
     }
     // 自动重试：仅在没有收到响应时（连接/传输层错误），上限 2 次（per-request 计数）
     final retryNum = err.requestOptions.extra[_retryCountKey] as int? ?? 0;
@@ -154,9 +184,6 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
         await Future.delayed(Duration(milliseconds: 300 << retryNum));
         try {
           RequestOptions options = err.requestOptions;
-          // 注意：计数必须通过 Options.extra 传入重试请求——dio 的
-          // Options.compose 只合并 baseOptions.extra 与传入 Options 的 extra，
-          // 只改 err.requestOptions.extra 会在重试时丢失计数导致无限重试
           var response = await apiClient.httpClient.request(
             options.path,
             options: Options(

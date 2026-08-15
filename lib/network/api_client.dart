@@ -46,7 +46,7 @@ class ApiClient {
   static String BASE_IMAGE_HOST = ImageHost;
   static String Accept_Language = "zh-CN";
 
-  String getIsoDate() {
+  static String getIsoDate() {
     DateTime dateTime = new DateTime.now();
     DateFormat dateFormat = new DateFormat("yyyy-MM-dd'T'HH:mm:ss'+00:00'");
     return dateFormat.format(dateTime);
@@ -75,7 +75,11 @@ class ApiClient {
         userSetting.networkMode,
       ),
     );
+    final oldAdapter = httpClient.httpClientAdapter;
     httpClient.httpClientAdapter = ConversionLayerAdapter(compatibleClient);
+    try {
+      oldAdapter.close(force: true);
+    } catch (_) {}
     if (Platform.isAndroid) {
       try {
         DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();

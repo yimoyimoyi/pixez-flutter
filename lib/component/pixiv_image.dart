@@ -94,7 +94,11 @@ class PixivImage extends StatefulWidget {
     );
     final existing = _cacheDio;
     if (existing != null) {
+      final oldAdapter = existing.httpClientAdapter;
       existing.httpClientAdapter = ConversionLayerAdapter(client);
+      try {
+        oldAdapter.close(force: true);
+      } catch (_) {}
       return;
     }
     final dio = Dio(BaseOptions(

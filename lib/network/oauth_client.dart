@@ -60,7 +60,11 @@ class OAuthClient {
         userSetting.oauthNetworkMode,
       ),
     );
+    final oldAdapter = httpClient.httpClientAdapter;
     httpClient.httpClientAdapter = ConversionLayerAdapter(compatibleClient);
+    try {
+      oldAdapter.close(force: true);
+    } catch (_) {}
     if (Platform.isAndroid) {
       try {
         DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
