@@ -21,8 +21,6 @@ import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import 'package:flutter_cache_manager_dio/flutter_cache_manager_dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/hoster.dart';
@@ -64,6 +62,10 @@ class TaskBean {
   String? source;
   String? host;
   NetworkMode? networkMode;
+  /// 主 isolate 入队时查询浏览缓存得到的文件路径（命中则下载 isolate
+  /// 直接复制，零网络；miss 为 null 走网络下载）。
+  /// 缓存库只在主 isolate 读写（单一写入者，避免双 isolate 互踩元数据）。
+  String? cachedFilePath;
 
   TaskBean({
     required this.url,
@@ -73,6 +75,7 @@ class TaskBean {
     this.networkMode,
     this.host,
     this.source,
+    this.cachedFilePath,
   });
 }
 
@@ -135,6 +138,7 @@ class Fetcher {
               taskBean.savePath!,
               taskBean.fileName!,
               taskBean.illusts!,
+              cachedFilePath: taskBean.cachedFilePath,
             );
             break;
           case IsoTaskState.ERROR:
@@ -167,6 +171,15 @@ class Fetcher {
 
   save(String url, Illusts illusts, String fileName) async {
     LPrinter.d(sendPortToChild.toString() + url);
+    // 主 isolate 查询浏览缓存（缓存库唯一写入者在此）：
+    // 命中则把文件路径传给下载 isolate 直接复制，零网络完成
+    String? cachedFilePath;
+    try {
+      final fileInfo = await pixivCacheManager?.getFileFromCache(url);
+      cachedFilePath = fileInfo?.file.path;
+    } catch (e) {
+      LPrinter.d("fetcher cache query failed: $e");
+    }
     var taskBean = TaskBean(
       url: url,
       illusts: illusts,
@@ -175,6 +188,7 @@ class Fetcher {
       source: userSetting.pictureSource,
       host: splashStore.host,
       savePath: (await getTemporaryDirectory()).path,
+      cachedFilePath: cachedFilePath,
     );
     queue.add(taskBean);
     nextJob();
@@ -224,8 +238,9 @@ class Fetcher {
     String url,
     String savePath,
     String fileName,
-    Illusts illusts,
-  ) async {
+    Illusts illusts, {
+    String? cachedFilePath,
+  }) async {
     var taskPersist = await taskPersistProvider.getAccount(url);
     if (taskPersist == null) return;
     await taskPersistProvider.update(taskPersist..status = 2);
@@ -234,6 +249,23 @@ class Fetcher {
     await saveStore.saveToGallery(uint8list, illusts, fileName);
     HapticUtil.success(minIntervalMs: 300);
     Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
+    // 网络下载完成 → 主 isolate 回填浏览缓存（缓存库唯一写入者）。
+    // 缓存命中（cachedFilePath 非空）的任务无需回填，直接跳过
+    if (cachedFilePath == null || cachedFilePath.isEmpty) {
+      try {
+        final uri = Uri.tryParse(url);
+        final path = uri?.path ?? '';
+        final dot = path.lastIndexOf('.');
+        final fileExtension = dot == -1 ? null : path.substring(dot + 1);
+        await pixivCacheManager?.putFileStream(
+          url,
+          file.openRead(),
+          fileExtension: fileExtension ?? 'jpg',
+        );
+      } catch (e) {
+        LPrinter.d("fetcher cache write-back failed: $e");
+      }
+    }
     var job = jobMaps[url];
     if (job != null) {
       job.status = 2;
@@ -301,16 +333,11 @@ entryPoint(SendMessage message) async {
     ),
   );
   dio.httpClientAdapter = ConversionLayerAdapter(client);
-  // 与主 isolate 浏览缓存共享同一磁盘缓存（同 'dioCache' 目录 + URL 原文 key）：
-  // 下载优先读取浏览缓存命中文件，下载成功自动回填，实现浏览⇄下载双向共享。
-  // 注意：Dart isolate 间静态变量不共享，主 isolate 的 pixivCacheManager 在此恒为
-  // null，必须在本 isolate 内重建（参数与主 isolate Config 保持一致：500 对象/30 天）。
-  pixivCacheManager = CacheManager(Config(
-    'dioCache',
-    fileService: DioHttpFileService(dio),
-    maxNrOfCacheObjects: 500,
-    stalePeriod: Duration(days: 30),
-  ));
+  // 注意：缓存库（dioCache 元数据）只在主 isolate 读写（单一写入者）。
+  // 下载 isolate 不再自建 CacheManager——双 isolate 各自 3s debounce 整文件
+  // 写回 dioCache.json 会互踩丢条目，导致浏览缓存失效、详情页原图重下载。
+  // 缓存命中由主 isolate 在入队时查询并传入 cachedFilePath，回填由主
+  // isolate 在收到 COMPLETE 后执行。
   ReceivePort receivePort = ReceivePort();
   sendPort.send(
     IsoContactBean(state: IsoTaskState.INIT, data: receivePort.sendPort),
@@ -345,44 +372,24 @@ entryPoint(SendMessage message) async {
                 taskBean.savePath! +
                 Platform.pathSeparator +
                 taskBean.fileName!;
-            // 下载：先尝试 CacheManager（已有缓存直接用），失败则 Dio 直下
+            // 下载：优先使用主 isolate 入队时查到的浏览缓存文件（零网络），
+            // miss 则 Dio 直下；缓存库读写均发生在主 isolate（单一写入者）
             const maxRetries = 2;
             bool success = false;
             Object? lastError;
-            // 阶段1: 尝试通过 CacheManager 获取（优先使用缓存）
-            try {
-              final cm = pixivCacheManager;
-              if (cm != null) {
-                await for (final response in cm.getFileStream(
-                  taskBean.url!,
-                  headers: {
-                    "referer": "https://app-api.pixiv.net/",
-                    "User-Agent": "PixivIOSApp/5.8.0",
-                  },
-                  withProgress: true,
-                )) {
-                  if (response is DownloadProgress) {
-                    sendPort.send(IsoContactBean(
-                      state: IsoTaskState.PROGRESS,
-                      data: IsoProgressBean(
-                        min: response.downloaded,
-                        total: response.totalSize ?? response.downloaded + 1,
-                        url: taskBean.url!,
-                      ),
-                    ));
-                  } else if (response is FileInfo) {
-                    final file = File(savePath);
-                    if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
-                    await response.file.copy(file.path);
-                    success = true;
-                    sendPort.send(IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean));
-                  }
-                }
+            final cachedFile = taskBean.cachedFilePath;
+            if (cachedFile != null && cachedFile.isNotEmpty) {
+              try {
+                final file = File(savePath);
+                if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
+                await File(cachedFile).copy(file.path);
+                success = true;
+                sendPort.send(IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean));
+              } catch (e) {
+                // 缓存文件已被驱逐/删除：回退到网络下载
+                LPrinter.d("fetcher cache copy failed, fallback to network: $e");
               }
-            } catch (e) {
-              LPrinter.d("fetcher CM attempt failed: $e");
             }
-            // 阶段2: CacheManager 失败/跳过，直接 Dio 下载
             if (!success) {
               for (int attempt = 0; attempt < maxRetries; attempt++) {
                 try {
@@ -411,21 +418,11 @@ entryPoint(SendMessage message) async {
                     final file = File(savePath);
                     if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
                     await file.writeAsBytes(resp.data!);
-                    // 回填浏览缓存：下载成功即写入，之后浏览/再次下载直接命中
-                    try {
-                      final uri = Uri.tryParse(taskBean.url!);
-                      final path = uri?.path ?? '';
-                      final dot = path.lastIndexOf('.');
-                      final fileExtension =
-                          dot == -1 ? null : path.substring(dot + 1);
-                      await pixivCacheManager?.putFile(
-                        taskBean.url!,
-                        Uint8List.fromList(resp.data!),
-                        fileExtension: fileExtension ?? 'jpg',
-                      );
-                    } catch (e) {
-                      LPrinter.d("fetcher cache write-back failed: $e");
-                    }
+                    // 回填浏览缓存由主 isolate 在 COMPLETE 处理后执行
+                    //（单一写入者，避免双 isolate 并发写缓存元数据互踩）。
+                    // 置空 cachedFilePath：若此前缓存 copy 失败回退到网络，
+                    // 需告知主 isolate 本次为网络下载、应执行回填
+                    taskBean.cachedFilePath = null;
                     success = true;
                     sendPort.send(IsoContactBean(state: IsoTaskState.COMPLETE, data: taskBean));
                     break;
