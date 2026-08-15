@@ -247,7 +247,6 @@ class Fetcher {
     File file = File(savePath + Platform.pathSeparator + fileName);
     final uint8list = await file.readAsBytes();
     await saveStore.saveToGallery(uint8list, illusts, fileName);
-    HapticUtil.success(minIntervalMs: 300);
     Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
     // 网络下载完成 → 主 isolate 回填浏览缓存（缓存库唯一写入者）。
     // 缓存命中（cachedFilePath 非空）的任务无需回填，直接跳过
