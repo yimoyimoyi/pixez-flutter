@@ -536,6 +536,9 @@ class _UsersPageState extends State<UsersPage>
     return ContextMenu(
       child: CachedNetworkImage(
         imageUrl: userStore.userDetail!.profile.background_image_url!,
+        fadeInDuration: const Duration(milliseconds: 250),
+        fadeInCurve: Curves.easeOut,
+        fadeOutDuration: const Duration(milliseconds: 250),
         fit: BoxFit.fitWidth,
         cacheManager: pixivCacheManager,
         httpHeaders: Hoster.header(

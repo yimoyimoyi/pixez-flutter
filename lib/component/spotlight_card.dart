@@ -119,6 +119,12 @@ class _SpotlightCardState extends State<SpotlightCard> {
                   child: Container(
                     child: CachedNetworkImage(
                       imageUrl: widget.spotlight.thumbnail,
+                      fadeInDuration: const Duration(milliseconds: 250),
+                      fadeInCurve: Curves.easeOut,
+                      fadeOutDuration: const Duration(milliseconds: 250),
+                      placeholder: (context, url) => Container(
+                        color: Theme.of(context).cardColor,
+                      ),
                       httpHeaders:
                           Hoster.header(url: widget.spotlight.thumbnail),
                       fit: BoxFit.cover,
@@ -158,6 +164,16 @@ class _CoverPreviewPage extends StatelessWidget {
         child: InteractiveViewer(
           child: CachedNetworkImage(
             imageUrl: url,
+            fadeInDuration: const Duration(milliseconds: 250),
+            fadeInCurve: Curves.easeOut,
+            fadeOutDuration: const Duration(milliseconds: 250),
+            placeholder: (context, url) => const Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(),
+              ),
+            ),
             httpHeaders: Hoster.header(url: url),
             cacheManager: pixivCacheManager,
             fit: BoxFit.contain,

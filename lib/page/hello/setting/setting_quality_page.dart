@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/app_widget_plugin.dart';
@@ -517,8 +518,26 @@ class _SettingQualityPageState extends State<SettingQualityPage>
             child: Row(
               children: <Widget>[
                 SizedBox(
-                  child: CircleAvatar(
-                    backgroundImage: NetworkImage(langsponsor.avatar),
+                  child: ClipOval(
+                    child: CachedNetworkImage(
+                      imageUrl: langsponsor.avatar,
+                      fadeInDuration: const Duration(milliseconds: 250),
+                      fadeInCurve: Curves.easeOut,
+                      fadeOutDuration: const Duration(milliseconds: 250),
+                      width: 30,
+                      height: 30,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        width: 30,
+                        height: 30,
+                        color: Theme.of(context).cardColor,
+                      ),
+                      errorWidget: (context, url, error) => CircleAvatar(
+                        radius: 15,
+                        backgroundColor: Theme.of(context).cardColor,
+                        child: const Icon(Icons.person, size: 16),
+                      ),
+                    ),
                   ),
                   width: 30,
                   height: 30,

@@ -596,7 +596,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                       tag: widget.heroString,
                       child: PixivImage(
                         url,
-                        fade: false,
                         width: MediaQuery.of(context).size.width,
                         cacheHeaderData: PixEzCacheHeaderData(
                           key: '${data.id}_0',
@@ -611,7 +610,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                                 data.imageUrls.medium,
                                 width: MediaQuery.of(context).size.width,
                                 placeWidget: placeWidget,
-                                fade: false,
                               )
                             : placeWidget,
                       ),
@@ -680,7 +678,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
             placeWidget: PixivImage(
               illust.metaPages[index].imageUrls!.medium,
               width: MediaQuery.of(context).size.width,
-              fade: false,
             ),
             cacheHeaderData: PixEzCacheHeaderData(
               key: '${illust.id}_${index}',
@@ -689,13 +686,11 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
               ),
             ),
             width: MediaQuery.of(context).size.width,
-            fade: false,
           ),
           tag: widget.heroString,
         );
       return PixivImage(
         url,
-        fade: false,
         width: MediaQuery.of(context).size.width,
         cacheHeaderData: PixEzCacheHeaderData(
           key: '${illust.id}_${index}',
@@ -719,9 +714,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                     illust.illustDetailImageUrl(index),
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
-                      fade: false,
                     ),
-                    fade: false,
                     cacheHeaderData: PixEzCacheHeaderData(
                       key: '${illust.id}_${index}',
                       quality: IllustQualityExtension.fromValue(
@@ -734,7 +727,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
               : NullHero(
                   child: PixivImage(
                     illust.metaPages[index].imageUrls!.medium,
-                    fade: false,
                     cacheHeaderData: PixEzCacheHeaderData(
                       key: '${illust.id}_${index}',
                       quality: IllustQuality.medium,
@@ -750,7 +742,6 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                 userSetting.pictureQuality,
               ),
             ),
-            fade: false,
             placeWidget: Container(
               height: 150,
               child: Center(

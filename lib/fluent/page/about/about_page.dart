@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -197,9 +198,28 @@ class _AboutPageState extends State<AboutPage> {
                               Container(
                                 height: 8,
                               ),
-                              CircleAvatar(
-                                backgroundImage: NetworkImage(
-                                  data.avatar,
+                              ClipOval(
+                                child: CachedNetworkImage(
+                                  imageUrl: data.avatar,
+                                  fadeInDuration:
+                                      const Duration(milliseconds: 250),
+                                  fadeInCurve: Curves.easeOut,
+                                  fadeOutDuration:
+                                      const Duration(milliseconds: 250),
+                                  width: 40,
+                                  height: 40,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    width: 40,
+                                    height: 40,
+                                    color: const Color(0xFFF0F0F0),
+                                  ),
+                                  errorWidget: (context, url, error) =>
+                                      CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: const Color(0xFFF0F0F0),
+                                    child: const Icon(FluentIcons.contact, size: 20),
+                                  ),
                                 ),
                               ),
                               Padding(
@@ -290,9 +310,30 @@ class _AboutPageState extends State<AboutPage> {
                                 trailing: Icon(FluentIcons.update_restore),
                               ),
                               ListTile(
-                                leading: CircleAvatar(
-                                  backgroundImage: NetworkImage(
-                                      'https://avatars1.githubusercontent.com/u/9017470?s=400&v=4'),
+                                leading: ClipOval(
+                                  child: CachedNetworkImage(
+                                    imageUrl:
+                                        'https://avatars1.githubusercontent.com/u/9017470?s=400&v=4',
+                                    fadeInDuration:
+                                        const Duration(milliseconds: 250),
+                                    fadeInCurve: Curves.easeOut,
+                                    fadeOutDuration:
+                                        const Duration(milliseconds: 250),
+                                    width: 40,
+                                    height: 40,
+                                    fit: BoxFit.cover,
+                                    placeholder: (context, url) => Container(
+                                      width: 40,
+                                      height: 40,
+                                      color: const Color(0xFFF0F0F0),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        CircleAvatar(
+                                      radius: 20,
+                                      backgroundColor: const Color(0xFFF0F0F0),
+                                      child: const Icon(FluentIcons.contact, size: 20),
+                                    ),
+                                  ),
                                 ),
                                 title: Text('Skimige'),
                                 subtitle:

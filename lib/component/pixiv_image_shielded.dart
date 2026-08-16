@@ -38,7 +38,6 @@ class PixivImageShielded extends StatefulWidget {
 }
 
 class _PixivImageShieldedState extends State<PixivImageShielded> {
-  late PixivImage? _pixivImage = null;
   @override
   Widget build(BuildContext context) {
     return Observer(
@@ -48,19 +47,16 @@ class _PixivImageShieldedState extends State<PixivImageShielded> {
             return hIsNotAllowedImage;
           }
         }
-        if (_pixivImage == null) {
-          _pixivImage = PixivImage(
-            widget.url,
-            placeWidget: widget.placeWidget,
-            fade: widget.fade,
-            fit: widget.fit,
-            enableMemoryCache: widget.enableMemoryCache,
-            height: widget.height,
-            width: widget.width,
-            host: widget.host,
-          );
-        }
-        return _pixivImage ?? Container();
+        return PixivImage(
+          widget.url,
+          placeWidget: widget.placeWidget,
+          fade: widget.fade,
+          fit: widget.fit,
+          enableMemoryCache: widget.enableMemoryCache,
+          height: widget.height,
+          width: widget.width,
+          host: widget.host,
+        );
       },
     );
   }

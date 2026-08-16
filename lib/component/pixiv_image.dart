@@ -17,7 +17,6 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
@@ -193,16 +192,7 @@ class _PixivImageState extends State<PixivImage> {
   // 连续槽位超时计数：网络故障时避免无限"排队→超时→重排"循环
   int _slotTimeoutCount = 0;
   static const int _maxSlotTimeouts = 3;
-  // 已检查过文件缓存的 url（去重：同一 url 只查一次，避免频繁磁盘查询）
-  String? _cacheCheckedUrl;
-  // 预解码完成的位图（RawImage 直显，零解码窗口）
-  ui.Image? _decodedImage;
-
-  // 协调器实例：initState 阶段（Element active）从列表作用域解析并缓存。
-  // 不能惰性初始化或每次用 getter 查 context——dispose 阶段 Element 已
-  // defunct，祖先查找会抛 "Looking up a deactivated widget's ancestor is unsafe"
   late final ImageLoadCoordinator _coordinator;
-
   @override
   void initState() {
     url = widget.url;
@@ -225,66 +215,6 @@ class _PixivImageState extends State<PixivImage> {
     }
   }
 
-  /// 图片加载完成后预解码文件缓存字节，完成后用 RawImage 显示。
-  ///
-  /// 为什么需要：返回页面时 TickerMode 恢复 → CachedNetworkImage 内部
-  /// OctoImage 的 Image 组件重新 resolve。Image 组件在 `_updateSourceStream`
-  /// 中（gaplessPlayback 默认 false）会强制清空 _imageInfo；ImageCache
-  /// 命中（同一 completer）则立即恢复无感知，未命中（被其他页面 LRU
-  /// 逐出）则显示 placeholder 直到重新加载完成 → 白屏。
-  /// 本方案在图片加载完成时就后台解码，随后无感切换到 RawImage 分支
-  /// （同图切换，视觉无变化）——此后任何时刻返回，位图必然已就绪，
-  /// OctoImage 已不在树中，其清空/重载机制完全不涉及。
-  Future<void> _preDecodeAfterLoad(String targetUrl) async {
-    // 已成功预解码过的 url 跳过（去重）；失败时不置位，网络重试加载
-    // 成功后允许再次尝试（缓存可能已被其他页面写入）
-    if (targetUrl.isEmpty ||
-        _decodedImage != null ||
-        _cacheCheckedUrl == targetUrl) {
-      return;
-    }
-    // 在异步操作前取显示宽度与缩放（await 后 context 可能已 unmount，
-    // 此时 MediaQuery.of 在 debug 下会抛错）
-    final double scale = MediaQuery.of(context).devicePixelRatio;
-    final double? displayWidth = width;
-    final int? targetWidth =
-        displayWidth == null ? null : (displayWidth * scale).round();
-    try {
-      final resolvedUrl = PixivImageSource.resolve(
-        targetUrl,
-        networkMode: userSetting.networkMode,
-        pictureSource: userSetting.pictureSource,
-      );
-      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
-      // 代际校验：检查期间 url 可能又变了（快速切换）
-      if (fileInfo != null &&
-          mounted &&
-          url == targetUrl &&
-          _decodedImage == null) {
-        // 异步读取，避免同步 IO 阻塞 UI 线程（原图可达 5~20MB）
-        final bytes = await fileInfo.file.readAsBytes();
-        if (bytes.isNotEmpty) {
-          final codec =
-              await ui.instantiateImageCodec(bytes, targetWidth: targetWidth);
-          try {
-            final frame = await codec.getNextFrame();
-            final image = frame.image;
-            if (mounted && url == targetUrl && _decodedImage == null) {
-              _cacheCheckedUrl = targetUrl; // 仅成功后置位，失败允许重试
-              setState(() => _decodedImage = image);
-            } else {
-              image.dispose();
-            }
-          } finally {
-            codec.dispose();
-          }
-        }
-      }
-    } catch (_) {
-      // 解码失败：保持现有加载流程（不置位，允许后续重试）
-    }
-  }
-
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -298,9 +228,6 @@ class _PixivImageState extends State<PixivImage> {
       _fromCache = false;
       _slotReleased = false;
       _slotTimeoutCount = 0;
-      _cacheCheckedUrl = null;
-      _decodedImage?.dispose();
-      _decodedImage = null;
       setState(() {
         url = widget.url;
         width = widget.width;
@@ -537,33 +464,33 @@ class _PixivImageState extends State<PixivImage> {
     final currentKey = url;
     if (_lastKey != currentKey) { _lastKey = currentKey; }
 
-    // 已预解码完成：RawImage 直显（零解码窗口，免疫返回时重新加载）
-    if (_decodedImage != null) {
-      return Container(
-        width: width,
-        height: height,
-        color: Colors.grey.shade200,
-        child: RawImage(
-          image: _decodedImage,
-          fit: fit ?? BoxFit.fitWidth,
-          width: width,
-          height: height,
-        ),
-      );
-    }
-
     // 方案 B: 如果已从缓存加载，直接显示（不受优先级协调影响）
     if (_cachedBytes != null) {
       return Container(
         width: width,
         height: height,
-        color: Colors.grey.shade200,
+        color: Theme.of(context).cardColor,
         child: Stack(
           fit: StackFit.expand,
           children: [
             // 解码期间先显示占位（缩略图），避免大图重新解码时空白
             if (placeWidget != null) placeWidget!,
-            Image.memory(_cachedBytes!, fit: fit ?? BoxFit.fitWidth, width: width, height: height),
+            Image.memory(
+              _cachedBytes!,
+              fit: fit ?? BoxFit.fitWidth,
+              width: width,
+              height: height,
+              gaplessPlayback: true,
+              frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                if (wasSynchronouslyLoaded || !fade) return child;
+                return AnimatedOpacity(
+                  opacity: frame == null ? 0 : 1,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  child: child,
+                );
+              },
+            ),
             // 缓存标记
             Positioned(
               bottom: 2, right: 2,
@@ -589,6 +516,7 @@ class _PixivImageState extends State<PixivImage> {
     final size = min(min(width ?? 60, height ?? 60), 60.0);
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
+      useOldImageOnUrlChange: true,
       placeholder: (context, url) =>
           widget.placeWidget ??
           // 加载超过 200ms 才显示进度环，避免快速加载（缓存命中）时的闪烁
@@ -610,15 +538,12 @@ class _PixivImageState extends State<PixivImage> {
           ),
       imageBuilder: (context, imageProvider) {
         _releaseSlot();
-        // 加载完成：后台预解码文件缓存，完成后 RawImage 直显，
-        // 返回页面时零窗口（免疫 ImageCache 逐出导致的重新加载白屏）。
-        // 去重与失败重试由 _preDecodeAfterLoad 内部管理（仅成功置位）
-        _preDecodeAfterLoad(widget.url);
         return Image(
           image: imageProvider,
           fit: fit ?? BoxFit.fitWidth,
           width: width,
           height: height,
+          gaplessPlayback: true,
         );
       },
       errorWidget: (context, url, error) {
@@ -655,9 +580,10 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
-      // fadeOut 期间 CachedNetworkImage 会显示 placeholder（旧图切换时），
-      // 缩短到 150ms 减少加载动画暴露窗口；缓存命中走方案 B 完全无此问题
-      fadeOutDuration: widget.fade ? const Duration(milliseconds: 150) : null,
+      // 快速淡入淡出动画：250ms easeOut 曲线，避免 500ms 默认延迟及硬切闪烁
+      fadeInDuration: widget.fade ? const Duration(milliseconds: 250) : Duration.zero,
+      fadeInCurve: Curves.easeOut,
+      fadeOutDuration: widget.fade ? const Duration(milliseconds: 250) : Duration.zero,
       imageUrl: url,
       cacheManager: pixivCacheManager,
       height: height,
@@ -670,7 +596,6 @@ class _PixivImageState extends State<PixivImage> {
   @override
   void dispose() {
     _slotTimer?.cancel();
-    _decodedImage?.dispose();
     _coordinator.cancel(widget.url);
     super.dispose();
   }

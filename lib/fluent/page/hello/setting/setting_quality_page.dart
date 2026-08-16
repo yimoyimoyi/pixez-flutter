@@ -17,6 +17,7 @@
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/material.dart' show Icons;
 import 'package:flutter_mobx/flutter_mobx.dart';
@@ -512,7 +513,27 @@ class _SettingQualityPageState extends State<SettingQualityPage>
             },
             child: Row(
               children: <Widget>[
-                CircleAvatar(backgroundImage: NetworkImage(langsponsor.avatar)),
+                ClipOval(
+                  child: CachedNetworkImage(
+                    imageUrl: langsponsor.avatar,
+                    fadeInDuration: const Duration(milliseconds: 250),
+                    fadeInCurve: Curves.easeOut,
+                    fadeOutDuration: const Duration(milliseconds: 250),
+                    width: 32,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      width: 32,
+                      height: 32,
+                      color: const Color(0xFFF0F0F0),
+                    ),
+                    errorWidget: (context, url, error) => CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFF0F0F0),
+                      child: const Icon(FluentIcons.contact, size: 16),
+                    ),
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Text(langsponsor.name),

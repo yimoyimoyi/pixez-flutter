@@ -503,14 +503,12 @@ class _IllustRowPageState extends State<IllustRowPage>
               tag: widget.heroString,
               child: PixivImage(
                 url,
-                fade: false,
                 width: MediaQuery.of(context).size.width,
                 placeWidget: (url != data.imageUrls.medium)
                     ? PixivImage(
                         data.imageUrls.medium,
                         width: MediaQuery.of(context).size.width,
                         placeWidget: placeWidget,
-                        fade: false,
                       )
                     : placeWidget,
               ),
@@ -556,16 +554,13 @@ class _IllustRowPageState extends State<IllustRowPage>
             placeWidget: PixivImage(
               illust.metaPages[index].imageUrls!.medium,
               width: MediaQuery.of(context).size.width,
-              fade: false,
             ),
             width: MediaQuery.of(context).size.width,
-            fade: false,
           ),
           tag: widget.heroString,
         );
       return PixivImage(
         url,
-        fade: false,
         width: MediaQuery.of(context).size.width,
         placeWidget: Container(
           height: height,
@@ -585,22 +580,18 @@ class _IllustRowPageState extends State<IllustRowPage>
                     illust.illustDetailImageUrl(index),
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
-                      fade: false,
                     ),
-                    fade: false,
                   ),
                   tag: widget.heroString,
                 )
               : NullHero(
                   child: PixivImage(
                     illust.metaPages[index].imageUrls!.medium,
-                    fade: false,
                   ),
                   tag: widget.heroString,
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
-            fade: false,
             placeWidget: Container(
               height: 150,
               child: Center(

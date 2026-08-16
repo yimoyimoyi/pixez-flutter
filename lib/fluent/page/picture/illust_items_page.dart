@@ -268,13 +268,11 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                 tag: widget.heroString,
                 child: PixivImage(
                   url,
-                  fade: false,
                   width: constraints.maxWidth,
                   height: height,
                   placeWidget: (url != data.imageUrls.medium)
                       ? PixivImage(
                           data.imageUrls.medium,
-                          fade: false,
                           width: constraints.maxWidth,
                           height: height,
                         )
@@ -325,10 +323,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
               placeWidget: PixivImage(
                 illust.metaPages[index].imageUrls!.medium,
                 width: constraints.maxWidth,
-                fade: false,
               ),
               width: constraints.maxWidth,
-              fade: false,
             ),
             tag: widget.heroString,
           ),
@@ -336,7 +332,6 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
       return LayoutBuilder(
         builder: (context, constraints) => PixivImage(
           url,
-          fade: false,
           width: constraints.maxWidth,
           placeWidget: Container(
             height: height,
@@ -357,22 +352,18 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                     illust.illustDetailImageUrl(index),
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
-                      fade: false,
                     ),
-                    fade: false,
                   ),
                   tag: widget.heroString,
                 )
               : NullHero(
                   child: PixivImage(
                     illust.illustDetailImageUrl(index),
-                    fade: false,
                   ),
                   tag: widget.heroString,
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
-            fade: false,
             placeWidget: Container(
               height: 150,
               child: Center(

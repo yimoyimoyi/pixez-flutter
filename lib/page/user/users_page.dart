@@ -464,6 +464,11 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                                     .userDetail!
                                     .profile
                                     .background_image_url!,
+                                fadeInDuration:
+                                    const Duration(milliseconds: 250),
+                                fadeInCurve: Curves.easeOut,
+                                fadeOutDuration:
+                                    const Duration(milliseconds: 250),
                                 fit: BoxFit.cover,
                                 cacheManager: pixivCacheManager,
                                 httpHeaders: Hoster.header(
@@ -501,6 +506,9 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                     child: CachedNetworkImage(
                       imageUrl:
                           userStore.userDetail!.profile.background_image_url!,
+                      fadeInDuration: const Duration(milliseconds: 250),
+                      fadeInCurve: Curves.easeOut,
+                      fadeOutDuration: const Duration(milliseconds: 250),
                       fit: BoxFit.fitWidth,
                       cacheManager: pixivCacheManager,
                       httpHeaders: Hoster.header(
@@ -746,6 +754,10 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                             borderRadius: BorderRadius.circular(12),
                             child: CachedNetworkImage(
                               imageUrl: userStore.user!.profileImageUrls.medium,
+                              fadeInDuration: const Duration(milliseconds: 250),
+                              fadeInCurve: Curves.easeOut,
+                              fadeOutDuration:
+                                  const Duration(milliseconds: 250),
                               fit: BoxFit.cover,
                               cacheManager: pixivCacheManager,
                               httpHeaders: Hoster.header(
