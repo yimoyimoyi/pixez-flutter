@@ -516,9 +516,9 @@ class _SettingQualityPageState extends State<SettingQualityPage>
                 ClipOval(
                   child: CachedNetworkImage(
                     imageUrl: langsponsor.avatar,
-                    fadeInDuration: const Duration(milliseconds: 250),
+                    fadeInDuration: const Duration(milliseconds: 350),
                     fadeInCurve: Curves.easeOut,
-                    fadeOutDuration: const Duration(milliseconds: 250),
+                    fadeOutDuration: const Duration(milliseconds: 350),
                     width: 32,
                     height: 32,
                     fit: BoxFit.cover,

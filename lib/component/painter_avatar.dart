@@ -122,9 +122,9 @@ class _PainterAvatarState extends State<PainterAvatar> {
         child: widget.size == null
             ? CachedNetworkImage(
                 imageUrl: widget.url,
-                fadeInDuration: const Duration(milliseconds: 250),
+                fadeInDuration: const Duration(milliseconds: 350),
                 fadeInCurve: Curves.easeOut,
-                fadeOutDuration: const Duration(milliseconds: 250),
+                fadeOutDuration: const Duration(milliseconds: 350),
                 imageBuilder: (context, imageProvider) => Container(
                   width: 60.0,
                   height: 60.0,
@@ -156,9 +156,9 @@ class _PainterAvatarState extends State<PainterAvatar> {
               )
             : CachedNetworkImage(
                 imageUrl: widget.url,
-                fadeInDuration: const Duration(milliseconds: 250),
+                fadeInDuration: const Duration(milliseconds: 350),
                 fadeInCurve: Curves.easeOut,
-                fadeOutDuration: const Duration(milliseconds: 250),
+                fadeOutDuration: const Duration(milliseconds: 350),
                 cacheManager: pixivCacheManager,
                 placeholder: (context, url) => Container(
                   width: widget.size!.width,

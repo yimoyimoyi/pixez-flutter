@@ -465,10 +465,10 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                                     .profile
                                     .background_image_url!,
                                 fadeInDuration:
-                                    const Duration(milliseconds: 250),
+                                    const Duration(milliseconds: 350),
                                 fadeInCurve: Curves.easeOut,
                                 fadeOutDuration:
-                                    const Duration(milliseconds: 250),
+                                    const Duration(milliseconds: 350),
                                 fit: BoxFit.cover,
                                 cacheManager: pixivCacheManager,
                                 httpHeaders: Hoster.header(
@@ -506,9 +506,9 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                     child: CachedNetworkImage(
                       imageUrl:
                           userStore.userDetail!.profile.background_image_url!,
-                      fadeInDuration: const Duration(milliseconds: 250),
+                      fadeInDuration: const Duration(milliseconds: 350),
                       fadeInCurve: Curves.easeOut,
-                      fadeOutDuration: const Duration(milliseconds: 250),
+                      fadeOutDuration: const Duration(milliseconds: 350),
                       fit: BoxFit.fitWidth,
                       cacheManager: pixivCacheManager,
                       httpHeaders: Hoster.header(
@@ -754,10 +754,10 @@ class _UsersPageState extends State<UsersPage> with TickerProviderStateMixin {
                             borderRadius: BorderRadius.circular(12),
                             child: CachedNetworkImage(
                               imageUrl: userStore.user!.profileImageUrls.medium,
-                              fadeInDuration: const Duration(milliseconds: 250),
+                              fadeInDuration: const Duration(milliseconds: 350),
                               fadeInCurve: Curves.easeOut,
                               fadeOutDuration:
-                                  const Duration(milliseconds: 250),
+                                  const Duration(milliseconds: 350),
                               fit: BoxFit.cover,
                               cacheManager: pixivCacheManager,
                               httpHeaders: Hoster.header(

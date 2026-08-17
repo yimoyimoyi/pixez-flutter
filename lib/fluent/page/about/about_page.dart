@@ -202,10 +202,10 @@ class _AboutPageState extends State<AboutPage> {
                                 child: CachedNetworkImage(
                                   imageUrl: data.avatar,
                                   fadeInDuration:
-                                      const Duration(milliseconds: 250),
+                                      const Duration(milliseconds: 350),
                                   fadeInCurve: Curves.easeOut,
                                   fadeOutDuration:
-                                      const Duration(milliseconds: 250),
+                                      const Duration(milliseconds: 350),
                                   width: 40,
                                   height: 40,
                                   fit: BoxFit.cover,
@@ -315,10 +315,10 @@ class _AboutPageState extends State<AboutPage> {
                                     imageUrl:
                                         'https://avatars1.githubusercontent.com/u/9017470?s=400&v=4',
                                     fadeInDuration:
-                                        const Duration(milliseconds: 250),
+                                        const Duration(milliseconds: 350),
                                     fadeInCurve: Curves.easeOut,
                                     fadeOutDuration:
-                                        const Duration(milliseconds: 250),
+                                        const Duration(milliseconds: 350),
                                     width: 40,
                                     height: 40,
                                     fit: BoxFit.cover,

@@ -315,7 +315,7 @@ class _PixivImageState extends State<PixivImage> {
                 if (wasSynchronouslyLoaded || !fade) return child;
                 return AnimatedOpacity(
                   opacity: frame == null ? 0 : 1,
-                  duration: const Duration(milliseconds: 250),
+                  duration: const Duration(milliseconds: 350),
                   curve: Curves.easeOut,
                   child: child,
                 );
@@ -416,10 +416,10 @@ class _PixivImageState extends State<PixivImage> {
           ),
         );
       },
-      // 快速淡入淡出动画：250ms easeOut 曲线，避免 500ms 默认延迟及硬切闪烁
-      fadeInDuration: widget.fade ? const Duration(milliseconds: 250) : Duration.zero,
+      // 快速淡入淡出动画：350ms easeOut 曲线，提供丝滑顺眼的过渡体验
+      fadeInDuration: widget.fade ? const Duration(milliseconds: 350) : Duration.zero,
       fadeInCurve: Curves.easeOut,
-      fadeOutDuration: widget.fade ? const Duration(milliseconds: 250) : Duration.zero,
+      fadeOutDuration: widget.fade ? const Duration(milliseconds: 350) : Duration.zero,
       imageUrl: url,
       cacheManager: pixivCacheManager,
       height: height,

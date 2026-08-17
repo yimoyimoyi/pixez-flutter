@@ -59,9 +59,9 @@ class SpotlightCard extends StatelessWidget {
                 alignment: Alignment.topCenter,
                 child: CachedNetworkImage(
                   imageUrl: spotlight.thumbnail,
-                  fadeInDuration: const Duration(milliseconds: 250),
+                  fadeInDuration: const Duration(milliseconds: 350),
                   fadeInCurve: Curves.easeOut,
-                  fadeOutDuration: const Duration(milliseconds: 250),
+                  fadeOutDuration: const Duration(milliseconds: 350),
                   placeholder: (context, url) => Container(
                     height: 150.0,
                     color: const Color(0xFFF0F0F0),
@@ -107,9 +107,9 @@ class _FluentCoverPreview extends StatelessWidget {
         child: InteractiveViewer(
           child: CachedNetworkImage(
             imageUrl: url,
-            fadeInDuration: const Duration(milliseconds: 250),
+            fadeInDuration: const Duration(milliseconds: 350),
             fadeInCurve: Curves.easeOut,
-            fadeOutDuration: const Duration(milliseconds: 250),
+            fadeOutDuration: const Duration(milliseconds: 350),
             placeholder: (context, url) => const Center(
               child: ProgressRing(),
             ),
