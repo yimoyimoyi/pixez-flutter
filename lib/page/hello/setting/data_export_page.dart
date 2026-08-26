@@ -59,7 +59,7 @@ class DataExportPage extends HookConsumerWidget {
         _buildAppDataListTile(
           context,
           I18n.of(context).tag_history,
-          Icons.label_outline,
+          Icons.bookmark,
           () async {
             try {
               await tagHistoryStore.exportData(context);
@@ -80,7 +80,7 @@ class DataExportPage extends HookConsumerWidget {
         _buildAppDataListTile(
           context,
           I18n.of(context).bookmark_tag,
-          Icons.star_outline,
+          Icons.star,
           () async {
             try {
               await bookTagStore.exportData(context);
