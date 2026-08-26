@@ -64,6 +64,9 @@ class PixivImage extends StatefulWidget {
   final String? errorHint; // 加载失败时显示的元信息（如标题/页码）
   /// 瀑布流中的位置索引（可为 null 表示不参与优先级协调）
   final int? priorityIndex;
+  /// 按显示宽度解码（如详情页大图按屏宽 × dpr 限制），
+  /// 减小解码内存与 ImageCache 占用；null 表示按原始尺寸解码
+  final int? memCacheWidth;
 
   PixivImage(
     this.url, {
@@ -77,6 +80,7 @@ class PixivImage extends StatefulWidget {
     this.cacheHeaderData,
     this.errorHint,
     this.priorityIndex,
+    this.memCacheWidth,
   });
 
   @override
@@ -123,13 +127,26 @@ class PixivImage extends StatefulWidget {
     _warmUpWorker(dio);
   }
 
-  /// 发送一个 HEAD 请求预热 Worker isolate
+  /// 预热图床 Worker：GET 根路径（带与图片一致的 referer/UA），
+  /// 触发 Cloudflare Worker 冷启动，避免用户浏览首图时才冷启动。
+  /// 部分 Worker 的 HEAD 冷启动会挂起 20s+（实测 p.yimovpn.xyz），
+  /// 改用 GET；fire-and-forget，失败无影响。
   static void _warmUpWorker(Dio dio) {
     if (userSetting.pictureSource == ImageHost) return;
     final source = userSetting.pictureSource;
     if (source == null || source.isEmpty) return;
     final warmUrl = source.startsWith('http') ? source : 'https://$source';
-    dio.head(warmUrl).then((_) {}).catchError((_) {});
+    dio
+        .get<List<int>>(
+          warmUrl,
+          options: Options(
+            headers: Hoster.header(url: warmUrl),
+            responseType: ResponseType.bytes,
+            receiveTimeout: const Duration(seconds: 15),
+          ),
+        )
+        .then((_) {})
+        .catchError((_) {});
   }
 }
 
@@ -179,10 +196,14 @@ class _PixivImageState extends State<PixivImage> {
   BoxFit? fit;
   bool fade = true;
   Widget? placeWidget;
+  int? memCacheWidth;
   int _retryCount = 0;
   String? _lastKey;
   Uint8List? _cachedBytes; // 方案 B: 从本地缓存回退的图片字节
   bool _fromCache = false;
+  // CachedNetworkImage 已渲染出图（当前 url）后，禁止 _cachedBytes 再覆盖：
+  // 慢磁盘下缓存字节晚于图片显示完成，切换会出现"图变白再淡入"的闪烁
+  bool _imageShown = false;
 
   // 优先级协调状态
   bool _canLoad = true;
@@ -202,6 +223,7 @@ class _PixivImageState extends State<PixivImage> {
     fit = widget.fit;
     fade = widget.fade;
     placeWidget = widget.placeWidget;
+    memCacheWidth = widget.memCacheWidth;
     // initState 阶段解析协调器实例（此时 Element active，可安全祖先查找），
     // 供 dispose 等阶段使用缓存引用
     _coordinator = ImageLoadCoordinator.of(context);
@@ -213,6 +235,12 @@ class _PixivImageState extends State<PixivImage> {
       _registeredUrl = widget.url;
       _requestSlot();
     }
+
+    // 注意：不在 initState 里主动检查文件缓存——那会与 CachedNetworkImage
+    // 双通道并行读取同一文件，慢磁盘（手机端）下其回填 _cachedBytes 晚于
+    // 图片显示，导致"已显示的图被替换为空白再淡入"的闪烁/白屏竞态。
+    // 首次加载交给 CachedNetworkImage 自身（其 file cache 命中已足够快），
+    // _checkCacheOnUrlChange 仅用于 url 变化等真正需要快速替换的场景。
   }
 
   @override
@@ -226,6 +254,7 @@ class _PixivImageState extends State<PixivImage> {
       _retryCount = 0;
       _cachedBytes = null;
       _fromCache = false;
+      _imageShown = false;
       _slotReleased = false;
       _slotTimeoutCount = 0;
       setState(() {
@@ -250,22 +279,25 @@ class _PixivImageState extends State<PixivImage> {
   Future<void> _checkCacheOnUrlChange(String targetUrl) async {
     if (targetUrl.isEmpty || _cachedBytes != null) return;
     try {
-      final resolvedUrl = PixivImageSource.resolve(
-        targetUrl,
-        networkMode: userSetting.networkMode,
-        pictureSource: userSetting.pictureSource,
-      );
-      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
+      // 缓存 key 是原始 URL：改写发生在 Dio 拦截器层，CacheManager 以传入
+      // url 为 key 存储。改查 resolvedUrl 在自定义图床下永远 miss
+      final fileInfo = await pixivCacheManager?.getFileFromCache(targetUrl);
       // 代际校验：检查期间 url 可能又变了（快速连续切换），
-      // 过期回调填入的字节会导致显示错误图片
-      if (fileInfo != null && mounted && url == targetUrl && _cachedBytes == null) {
+      // 过期回调填入的字节会导致显示错误图片。
+      // 图片已显示（_imageShown）时不覆盖，避免"显示中→空白→淡入"闪烁
+      if (fileInfo != null &&
+          mounted &&
+          url == targetUrl &&
+          _cachedBytes == null &&
+          !_imageShown) {
         // 异步读取，避免同步 IO 阻塞 UI 线程
         final bytes = await fileInfo.file.readAsBytes();
         // 代际校验：异步读取期间 url 可能已切换，复检后才能填入字节
         if (bytes.isNotEmpty &&
             mounted &&
             url == targetUrl &&
-            _cachedBytes == null) {
+            _cachedBytes == null &&
+            !_imageShown) {
           setState(() {
             _cachedBytes = Uint8List.fromList(bytes);
             _fromCache = true;
@@ -286,16 +318,18 @@ class _PixivImageState extends State<PixivImage> {
         networkMode: userSetting.networkMode,
         pictureSource: userSetting.pictureSource,
       );
-      // 1) 尝试本地文件缓存
-      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
-      if (fileInfo != null && mounted) {
+      // 1) 尝试本地文件缓存（key 为原始 URL，与 CachedNetworkImage 一致；
+      // resolvedUrl 仅用于下方直接下载）
+      final fileInfo = await pixivCacheManager?.getFileFromCache(sourceUrl);
+      if (fileInfo != null && mounted && !_imageShown) {
         // 异步读取，避免同步 IO 阻塞 UI 线程
         final bytes = await fileInfo.file.readAsBytes();
         // 代际校验：异步读取期间 url 可能已切换，复检后才能填入字节
         if (bytes.isNotEmpty &&
             mounted &&
             url == sourceUrl &&
-            _cachedBytes == null) {
+            _cachedBytes == null &&
+            !_imageShown) {
           setState(() {
             _cachedBytes = bytes;
             _fromCache = true;
@@ -401,20 +435,19 @@ class _PixivImageState extends State<PixivImage> {
     // 已经获得加载许可，无需绕过
     if (_canLoad) return;
     try {
-      final resolvedUrl = PixivImageSource.resolve(
-        targetUrl,
-        networkMode: userSetting.networkMode,
-        pictureSource: userSetting.pictureSource,
-      );
-      final fileInfo = await pixivCacheManager?.getFileFromCache(resolvedUrl);
-      if (fileInfo != null && mounted && !_canLoad) {
+      // 缓存 key 是原始 URL：改写发生在 Dio 拦截器层，CacheManager 以传入
+      // url 为 key 存储。改查 resolvedUrl 在自定义图床下永远 miss
+      final fileInfo = await pixivCacheManager?.getFileFromCache(targetUrl);
+      if (fileInfo != null && mounted && !_canLoad && !_imageShown) {
         // 异步读取，避免同步 IO 阻塞 UI 线程
         final bytes = await fileInfo.file.readAsBytes();
-        // 代际校验：异步读取期间 url 可能已切换，复检后才能填入字节
+        // 代际校验：异步读取期间 url 可能已切换，复检后才能填入字节。
+        // 图片已显示（_imageShown）时不覆盖，避免"显示中→空白→淡入"闪烁
         if (bytes.isNotEmpty &&
             mounted &&
             url == targetUrl &&
-            _cachedBytes == null) {
+            _cachedBytes == null &&
+            !_imageShown) {
           // 缓存命中：直接填入 _cachedBytes，build 走"已缓存"分支
           //（Image.memory 直接显示，完全绕过 CachedNetworkImage 管线）
           _coordinator.cancel(targetUrl);
@@ -538,6 +571,8 @@ class _PixivImageState extends State<PixivImage> {
           ),
       imageBuilder: (context, imageProvider) {
         _releaseSlot();
+        // 图片已渲染：此后禁止 _cachedBytes 覆盖（见 _imageShown 注释）
+        _imageShown = true;
         return Image(
           image: imageProvider,
           fit: fit ?? BoxFit.fitWidth,
@@ -589,6 +624,7 @@ class _PixivImageState extends State<PixivImage> {
       height: height,
       width: width,
       fit: fit ?? BoxFit.fitWidth,
+      memCacheWidth: memCacheWidth,
       httpHeaders: {...Hoster.header(url: url)},
     );
   }

@@ -1,5 +1,6 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/fluent/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
@@ -50,6 +51,8 @@ class _PictureListPageState extends State<PictureListPage> {
 
   @override
   void initState() {
+    // 图片查看页打开期间冻结列表协调器队列，避免争抢连接
+    ImageLoadCoordinator.enterDetailMode();
     _store = widget.store;
     _iStores = widget.iStores;
     _lightingStore = widget.lightingStore;
@@ -164,6 +167,7 @@ class _PictureListPageState extends State<PictureListPage> {
 
   @override
   void dispose() {
+    ImageLoadCoordinator.exitDetailMode();
     _pageController.dispose();
     super.dispose();
   }

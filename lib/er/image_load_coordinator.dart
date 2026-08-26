@@ -49,12 +49,42 @@ class ImageLoadCoordinator {
   /// 全局回退实例（无列表作用域的 PixivImage 使用，如非列表场景）
   static final ImageLoadCoordinator instance = ImageLoadCoordinator._();
 
+  /// 全局实例注册表：exitDetailMode 恢复时主动唤醒所有实例的队列。
+  /// 否则"最后一个 release 发生在暂停期间"时队列无人唤醒
+  static final Set<ImageLoadCoordinator> _instances = {};
+
+  /// 详情页打开期间冻结所有列表协调器的队列推进：栈下的列表页仍在
+  /// 悄悄抓取屏外缩略图，会与详情页大图争同一个 rhttp 连接池。
+  /// 引用计数支持嵌套详情页（详情页再开详情页）。
+  static int _detailCount = 0;
+  static bool _globalPaused = false;
+
+  /// 进入详情模式：暂停队列唤醒（不中断已活跃的请求）
+  static void enterDetailMode() {
+    _detailCount++;
+    _globalPaused = true;
+  }
+
+  /// 退出详情模式：恢复队列唤醒。
+  /// 暂停期间可能无人释放槽位，需主动 drain 所有实例避免队列卡死
+  static void exitDetailMode() {
+    if (_detailCount > 0) _detailCount--;
+    _globalPaused = _detailCount > 0;
+    if (!_globalPaused) {
+      for (final coordinator in _instances.toList()) {
+        coordinator._drainQueue();
+      }
+    }
+  }
+
   /// 创建独立实例：每个列表页持有一个，隔离可视范围与队列状态，
   /// 避免多页面共享全局状态导致优先级错乱与队列饥饿。
   /// 页面销毁时应调用 [dispose] 释放
   factory ImageLoadCoordinator.create() => ImageLoadCoordinator._();
 
-  ImageLoadCoordinator._();
+  ImageLoadCoordinator._() {
+    _instances.add(this);
+  }
 
   /// 从列表作用域取协调器：子树中存在 [ImageCoordinatorScope] 时使用
   /// 独立实例，否则回退全局实例
@@ -67,6 +97,7 @@ class ImageLoadCoordinator {
   /// 释放实例占用的定时器与队列（页面 dispose 时调用）。
   /// 实例不再使用时不会残留周期定时器与排队项
   void dispose() {
+    _instances.remove(this);
     _cleanupTimer?.cancel();
     _cleanupTimer = null;
     _activeSlots.clear();
@@ -158,6 +189,8 @@ class ImageLoadCoordinator {
   }
 
   void _drainQueue() {
+    // 详情页打开期间不唤醒排队者：详情大图独占连接，返回列表后恢复
+    if (_globalPaused) return;
     while (_activeSlots.length < maxConcurrent && _queue.isNotEmpty) {
       final entry = _queue.removeAt(0);
       if (_activeUrls.contains(entry.url)) continue;

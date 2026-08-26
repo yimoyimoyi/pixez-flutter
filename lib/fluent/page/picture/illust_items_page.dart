@@ -11,6 +11,7 @@ import 'package:pixez/fluent/component/pixiv_image.dart';
 import 'package:pixez/fluent/component/selectable_html.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/star_icon.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/exts.dart';
@@ -62,6 +63,9 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
     // widget.relay.more =
     //     () => buildshowBottomSheet(context, _illustStore.illusts!);
 
+    // 详情页打开期间冻结列表协调器队列，避免栈下的列表页
+    // 继续抓取屏外缩略图与详情大图争连接
+    ImageLoadCoordinator.enterDetailMode();
     illustStore = widget.store ?? IllustStore(widget.id, null);
     illustStore.fetch();
     aboutStore = IllustAboutStore(widget.id, refreshController);
@@ -92,6 +96,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
 
   @override
   void dispose() {
+    ImageLoadCoordinator.exitDetailMode();
     illustStore.dispose();
     scrollController.dispose();
     refreshController.dispose();
@@ -235,19 +240,42 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                   BuildContext context,
                   int index,
                 ) {
-                  return IllustItem(
-                    index,
-                    data,
-                    widget,
-                    icon: buildIllustsItem(index, data, height),
-                    onMultiSavePressed: () async {
-                      await showMutiChoiceDialog(data, context);
-                    },
-                    save: _pressSave,
+                  return KeepAlive(
+                    // 多图层保活：滚出视野不销毁图片 State，滚回立即恢复显示，
+                    // 避免重新走 CachedNetworkImage 加载流程与淡入动画。
+                    // 保活会强引用已解码的 ui.Image（每页 medium 约 8MB），
+                    // 手机端内存有限，超过 8 页不保活（长漫画滚动重建走文件缓存）
+                    keepAlive: data.metaPages.length <= 8,
+                    child: IllustItem(
+                      index,
+                      data,
+                      widget,
+                      icon: buildIllustsItem(index, data, height),
+                      onMultiSavePressed: () async {
+                        await showMutiChoiceDialog(data, context);
+                      },
+                      save: _pressSave,
+                    ),
                   );
                 }, childCount: data.metaPages.length),
               ),
     ];
+  }
+
+  /// 详情大图按显示宽度解码：url 等于 medium 时保持原始解码以复用
+  /// 预览页 ImageCache；否则按屏宽 × dpr 限制解码尺寸（上限 2048），
+  /// 降低解码内存与缓存驱逐，返回 null 表示按原始尺寸解码
+  int? _displayCacheWidth(
+    BuildContext context,
+    double width,
+    String url,
+    String mediumUrl,
+  ) {
+    if (url == mediumUrl) return null;
+    return (width * MediaQuery.of(context).devicePixelRatio)
+        .round()
+        .clamp(1, 2048)
+        .toInt();
   }
 
   Widget buildPicture(Illusts data, double height) {
@@ -270,6 +298,12 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                   url,
                   width: constraints.maxWidth,
                   height: height,
+                  memCacheWidth: _displayCacheWidth(
+                    context,
+                    constraints.maxWidth,
+                    url,
+                    data.imageUrls.medium,
+                  ),
                   placeWidget: (url != data.imageUrls.medium)
                       ? PixivImage(
                           data.imageUrls.medium,
@@ -320,11 +354,17 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
           builder: (context, constraints) => NullHero(
             child: PixivImage(
               url,
+              width: constraints.maxWidth,
+              memCacheWidth: _displayCacheWidth(
+                context,
+                constraints.maxWidth,
+                url,
+                illust.metaPages[index].imageUrls!.medium,
+              ),
               placeWidget: PixivImage(
                 illust.metaPages[index].imageUrls!.medium,
                 width: constraints.maxWidth,
               ),
-              width: constraints.maxWidth,
             ),
             tag: widget.heroString,
           ),
@@ -333,6 +373,12 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
         builder: (context, constraints) => PixivImage(
           url,
           width: constraints.maxWidth,
+          memCacheWidth: _displayCacheWidth(
+            context,
+            constraints.maxWidth,
+            url,
+            illust.metaPages[index].imageUrls!.medium,
+          ),
           placeWidget: Container(
             height: height,
             child: Center(
@@ -350,6 +396,12 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
               ? NullHero(
                   child: PixivImage(
                     illust.illustDetailImageUrl(index),
+                    memCacheWidth: _displayCacheWidth(
+                      context,
+                      MediaQuery.of(context).size.width,
+                      illust.illustDetailImageUrl(index),
+                      illust.metaPages[index].imageUrls!.medium,
+                    ),
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
                     ),
@@ -364,6 +416,12 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
+            memCacheWidth: _displayCacheWidth(
+              context,
+              MediaQuery.of(context).size.width,
+              illust.illustDetailImageUrl(index),
+              illust.metaPages[index].imageUrls!.medium,
+            ),
             placeWidget: Container(
               height: 150,
               child: Center(
