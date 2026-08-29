@@ -28,6 +28,7 @@ pub enum HttpHeaders {
     List(Vec<(String, String)>),
 }
 
+#[derive(Clone)]
 pub enum HttpBody {
     Text(String),
     Bytes(Vec<u8>),
@@ -36,18 +37,21 @@ pub enum HttpBody {
     Multipart(MultipartPayload),
 }
 
+#[derive(Clone)]
 pub struct MultipartPayload {
     pub parts: Vec<(String, MultipartItem)>,
     // https://github.com/seanmonstar/reqwest/issues/2374
     // pub boundary: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct MultipartItem {
     pub value: MultipartValue,
     pub file_name: Option<String>,
     pub content_type: Option<String>,
 }
 
+#[derive(Clone)]
 pub enum MultipartValue {
     Text(String),
     Bytes(Vec<u8>),
@@ -359,123 +363,130 @@ async fn make_http_request_helper(
     };
 
     let parsed_url = Url::parse(&url).map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-    let effective_client = client.client_for_url(&parsed_url).await?;
+    let host = parsed_url
+        .host_str()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
 
-    let request = {
-        let mut request = effective_client.request(method.to_method(), parsed_url);
+    // BytesStream 请求体只能消费一次：首次构建时移入 request；
+    // T3 重试路径已排除 BytesStream，不会二次消费
+    let mut stream_body =
+        body_stream.map(|s| s.receiver.map(|v| Ok::<Vec<u8>, RhttpError>(v)));
 
-        request = match client.http_version_pref {
-            HttpVersionPref::Http10 => request.version(Version::HTTP_10),
-            HttpVersionPref::Http11 => request.version(Version::HTTP_11),
-            HttpVersionPref::Http2 => request.version(Version::HTTP_2),
-            HttpVersionPref::Http3 => request.version(Version::HTTP_3),
-            HttpVersionPref::All => request,
-        };
+    // T3：内置 ECH config 被服务器拒绝（config 已轮换/过期）时，
+    // 清除缓存强制重新 DoH 并重建 client 后自动重试一次。
+    // 仅安全方法 + 可重建请求体才会重试（避免非幂等副作用）
+    let mut ech_retried = false;
+    let response = loop {
+        let effective_client = client.client_for_url(&parsed_url).await?;
 
-        if let Some(query) = query {
-            request = request.query(&query);
-        }
+        let request = {
+            let mut request = effective_client.request(method.to_method(), parsed_url.clone());
 
-        match headers {
-            Some(HttpHeaders::Map(map)) => {
-                for (k, v) in map {
-                    let header_name = HeaderName::from_str(&k)
-                        .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-                    let header_value = HeaderValue::from_str(&v)
-                        .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-                    request = request.header(header_name, header_value);
-                }
-            }
-            Some(HttpHeaders::List(list)) => {
-                for (k, v) in list {
-                    let header_name = HeaderName::from_str(&k)
-                        .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-                    let header_value = HeaderValue::from_str(&v)
-                        .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-                    request = request.header(header_name, header_value);
-                }
-            }
-            None => (),
-        };
-
-        request = match body {
-            Some(HttpBody::Text(text)) => request.body(text),
-            Some(HttpBody::Bytes(bytes)) => request.body(bytes),
-            Some(HttpBody::BytesStream) => {
-                let stream = body_stream
-                    .expect("body_stream should exist for HttpBody::BytesStream")
-                    .receiver
-                    .map(|v| Ok::<Vec<u8>, RhttpError>(v));
-
-                let body = reqwest::Body::wrap_stream(stream);
-                request.body(body)
-            }
-            Some(HttpBody::Form(form)) => request.form(&form),
-            Some(HttpBody::Multipart(body)) => {
-                let mut form = reqwest::multipart::Form::new();
-                for (k, v) in body.parts {
-                    let mut part = match v.value {
-                        MultipartValue::Text(text) => reqwest::multipart::Part::text(text),
-                        MultipartValue::Bytes(bytes) => reqwest::multipart::Part::bytes(bytes),
-                        MultipartValue::File(file) => {
-                            let file = tokio::fs::File::open(file).await.map_err(|_| {
-                                RhttpError::RhttpUnknownError("Failed to open file".to_string())
-                            })?;
-                            reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-                                tokio_util::io::ReaderStream::new(file),
-                            ))
-                        }
-                    };
-
-                    if let Some(file_name) = v.file_name {
-                        part = part.file_name(file_name);
-                    }
-
-                    if let Some(content_type) = v.content_type {
-                        part = part
-                            .mime_str(&content_type)
-                            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
-                    }
-
-                    form = form.part(k, part);
-                }
-
-                request.multipart(form)
-            }
-            None => request,
-        };
-
-        request
-            .build()
-            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?
-    };
-
-    let response = effective_client.execute(request).await.map_err(|e| {
-        if e.is_redirect() {
-            RhttpError::RhttpRedirectError
-        } else if e.is_timeout() {
-            RhttpError::RhttpTimeoutError
-        } else {
-            // We use the debug string because it contains more information
-            let inner = e.source();
-            let is_cert_error = match inner {
-                // TODO: This is a hacky way to check if the error is a certificate error
-                Some(inner) => format!("{:?}", inner).contains("InvalidCertificate"),
-                None => false,
+            request = match client.http_version_pref {
+                HttpVersionPref::Http10 => request.version(Version::HTTP_10),
+                HttpVersionPref::Http11 => request.version(Version::HTTP_11),
+                HttpVersionPref::Http2 => request.version(Version::HTTP_2),
+                HttpVersionPref::Http3 => request.version(Version::HTTP_3),
+                HttpVersionPref::All => request,
             };
 
-            if is_cert_error {
-                RhttpError::RhttpInvalidCertificateError(format!("{:?}", inner.unwrap()))
-            } else if e.is_connect() {
-                RhttpError::RhttpConnectionError(format!("{:?}", inner.unwrap()))
-            } else {
-                RhttpError::RhttpUnknownError(match inner {
-                    Some(inner) => format!("{inner:?}"),
-                    None => format!("{e:?}"),
-                })
+            if let Some(query) = query.as_ref() {
+                request = request.query(query);
+            }
+
+            match headers.as_ref() {
+                Some(HttpHeaders::Map(map)) => {
+                    for (k, v) in map {
+                        let header_name = HeaderName::from_str(k)
+                            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+                        let header_value = HeaderValue::from_str(v)
+                            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+                        request = request.header(header_name, header_value);
+                    }
+                }
+                Some(HttpHeaders::List(list)) => {
+                    for (k, v) in list {
+                        let header_name = HeaderName::from_str(k)
+                            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+                        let header_value = HeaderValue::from_str(v)
+                            .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+                        request = request.header(header_name, header_value);
+                    }
+                }
+                None => (),
+            };
+
+            request = match body.as_ref() {
+                Some(HttpBody::Text(text)) => request.body(text.clone()),
+                Some(HttpBody::Bytes(bytes)) => request.body(bytes.clone()),
+                Some(HttpBody::BytesStream) => {
+                    let stream = stream_body
+                        .take()
+                        .expect("body_stream should exist for HttpBody::BytesStream");
+                    request.body(reqwest::Body::wrap_stream(stream))
+                }
+                Some(HttpBody::Form(form)) => request.form(form),
+                Some(HttpBody::Multipart(body)) => {
+                    let mut form = reqwest::multipart::Form::new();
+                    for (k, v) in &body.parts {
+                        let mut part = match &v.value {
+                            MultipartValue::Text(text) => {
+                                reqwest::multipart::Part::text(text.clone())
+                            }
+                            MultipartValue::Bytes(bytes) => {
+                                reqwest::multipart::Part::bytes(bytes.clone())
+                            }
+                            MultipartValue::File(file) => {
+                                let file = tokio::fs::File::open(file.clone()).await.map_err(
+                                    |_| {
+                                        RhttpError::RhttpUnknownError(
+                                            "Failed to open file".to_string(),
+                                        )
+                                    },
+                                )?;
+                                reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+                                    tokio_util::io::ReaderStream::new(file),
+                                ))
+                            }
+                        };
+
+                        if let Some(file_name) = &v.file_name {
+                            part = part.file_name(file_name.clone());
+                        }
+
+                        if let Some(content_type) = &v.content_type {
+                            part = part
+                                .mime_str(content_type)
+                                .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+                        }
+
+                        form = form.part(k.clone(), part);
+                    }
+
+                    request.multipart(form)
+                }
+                None => request,
+            };
+
+            request
+                .build()
+                .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?
+        };
+
+        match effective_client.execute(request).await {
+            Ok(response) => break response,
+            Err(e) => {
+                let err = map_execute_error(e);
+                if !ech_retried && is_ech_rejected(&err) && can_retry_ech(&method, &body) {
+                    ech_retried = true;
+                    client.invalidate_ech_for(&host).await;
+                    continue;
+                }
+                return Err(err);
             }
         }
-    })?;
+    };
 
     if client.throw_on_status_code {
         let status = response.status();
@@ -506,6 +517,58 @@ async fn make_http_request_helper(
     Ok(response)
 }
 
+/// 将 reqwest 执行错误映射为 RhttpError（与证书错误判断共用
+/// source 链的 debug 字符串匹配模式）
+fn map_execute_error(e: reqwest::Error) -> RhttpError {
+    if e.is_redirect() {
+        RhttpError::RhttpRedirectError
+    } else if e.is_timeout() {
+        RhttpError::RhttpTimeoutError
+    } else {
+        // We use the debug string because it contains more information
+        let inner = e.source();
+        let is_cert_error = match inner {
+            // TODO: This is a hacky way to check if the error is a certificate error
+            Some(inner) => format!("{:?}", inner).contains("InvalidCertificate"),
+            None => false,
+        };
+
+        if is_cert_error {
+            RhttpError::RhttpInvalidCertificateError(format!("{:?}", inner.unwrap()))
+        } else if e.is_connect() {
+            RhttpError::RhttpConnectionError(format!("{:?}", inner.unwrap()))
+        } else {
+            RhttpError::RhttpUnknownError(match inner {
+                Some(inner) => format!("{inner:?}"),
+                None => format!("{e:?}"),
+            })
+        }
+    }
+}
+
+/// T3：检测 ECH 握手被服务器拒绝（内置/缓存 config 已轮换或过期，
+/// rustls 返回 ServerRejectedEncryptedClientHello）——需要强制刷新
+/// config 后自动重试
+fn is_ech_rejected(err: &RhttpError) -> bool {
+    matches!(
+        err,
+        RhttpError::RhttpConnectionError(msg) | RhttpError::RhttpUnknownError(msg)
+            if msg.contains("ServerRejectedEncryptedClientHello")
+    )
+}
+
+/// T3：判断 ECH 自动重试的可行性——仅限安全方法且请求体可重建：
+/// BytesStream 的流已被消费、Multipart 的文件流同样不可重建
+fn can_retry_ech(method: &HttpMethod, body: &Option<HttpBody>) -> bool {
+    let safe_method = matches!(
+        method.method.as_str(),
+        "GET" | "HEAD" | "OPTIONS" | "TRACE"
+    );
+    let rebuildable_body =
+        !matches!(body, Some(HttpBody::BytesStream) | Some(HttpBody::Multipart(_)));
+    safe_method && rebuildable_body
+}
+
 fn header_to_vec(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
     headers
         .iter()
@@ -522,4 +585,56 @@ pub fn cancel_request(token: &CancellationToken) {
 
 fn extract_ip(response: &Response) -> Option<String> {
     response.remote_addr().map(|addr| addr.ip().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_can_retry_ech() {
+        // T3：仅安全方法 + 可重建请求体才自动重试
+        let get = HttpMethod {
+            method: "GET".to_string(),
+        };
+        assert!(can_retry_ech(&get, &None), "GET + 无 body 应可重试");
+        assert!(
+            can_retry_ech(&get, &Some(HttpBody::Text("x".to_string()))),
+            "GET + 文本 body 应可重试"
+        );
+        assert!(
+            !can_retry_ech(&get, &Some(HttpBody::BytesStream)),
+            "BytesStream 已被消费，不可重试"
+        );
+        assert!(
+            !can_retry_ech(
+                &get,
+                &Some(HttpBody::Multipart(MultipartPayload { parts: vec![] }))
+            ),
+            "Multipart 文件流不可重建，不可重试"
+        );
+        let post = HttpMethod {
+            method: "POST".to_string(),
+        };
+        assert!(!can_retry_ech(&post, &None), "写方法不重试（避免非幂等副作用）");
+        let head = HttpMethod {
+            method: "HEAD".to_string(),
+        };
+        assert!(can_retry_ech(&head, &None), "其他安全方法应可重试");
+    }
+
+    #[test]
+    fn test_is_ech_rejected() {
+        // T3：识别 rustls 的 ECH 拒绝错误（config 轮换/过期）
+        assert!(is_ech_rejected(&RhttpError::RhttpConnectionError(
+            "handshake error: ServerRejectedEncryptedClientHello".to_string()
+        )));
+        assert!(is_ech_rejected(&RhttpError::RhttpUnknownError(
+            "ServerRejectedEncryptedClientHello".to_string()
+        )));
+        assert!(!is_ech_rejected(&RhttpError::RhttpConnectionError(
+            "connection reset by peer".to_string()
+        )));
+        assert!(!is_ech_rejected(&RhttpError::RhttpTimeoutError));
+    }
 }

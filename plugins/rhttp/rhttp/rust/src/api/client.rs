@@ -17,13 +17,22 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration as StdDuration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, Notify, RwLock};
 pub use tokio_util::sync::CancellationToken;
 
 const ALIDNS_RESOLVE_ENDPOINT: &str = "https://223.5.5.5/resolve";
 const ECH_BOOTSTRAP_HOST: &str = "cloudflare-ech.com";
+
+/// T3：内置的 Cloudflare ECH config（2026-08-30 从 AliDNS HTTPS 记录获取）。
+/// 用于进程内首次请求的冷启动兜底——免去首请求的 DoH 往返延迟；
+/// 若已轮换失效，握手会被服务器拒绝，由 http.rs 的自动重试路径
+/// 清除缓存、强制重新 DoH 后重建 client 重试一次
+const BUILTIN_ECH_CONFIG_BASE64: &str = "AEX+DQBBRAAgACCnLwJmLitMBK1QAaEjyUWooIefQjI8u06YMkWVcYiNQAAEAAEAAQASY2xvdWRmbGFyZS1lY2guY29tAAA=";
+/// 内置 config 兜底的缓存 TTL：仅用于 client 缓存条目的 expires_at，
+/// 短于 DoH TTL 以尽快过渡到真实查询结果
+const BUILTIN_ECH_CONFIG_FALLBACK_TTL: StdDuration = StdDuration::from_secs(60);
 
 #[derive(Clone)]
 pub struct ClientSettings {
@@ -167,6 +176,9 @@ struct ClientRuntime {
 struct EchClientCacheEntry {
     client: Option<reqwest::Client>,
     expires_at: Instant,
+    /// 当前生效的 ECH config 字节（T1：用于对比复用——config 未变化时
+    /// 复用现有 client，保留 HTTP/2 连接池，避免频繁重建）
+    ech_config: Vec<u8>,
 }
 
 struct EchLookupResult {
@@ -201,12 +213,15 @@ impl RequestClient {
             .map(str::to_ascii_lowercase)
             .unwrap_or_default();
 
+        // 快路径：未过期缓存直接命中
         if let Some(cached) = self.runtime.ech_clients.read().await.get(&host).cloned() {
             if cached.expires_at > Instant::now() {
                 return Ok(cached.client.unwrap_or_else(|| self.client.clone()));
             }
         }
 
+        // 慢路径：查询 ECH config（T2：Single-Flight + 跨 host/跨 client 共享，
+        // T3：内置 config 冷启动兜底已内部化），并发 miss 只发一次 DoH
         let ech_lookup = match self.runtime.ech.lookup_ech_config(&host).await {
             Ok(ech_lookup) => ech_lookup,
             Err(error) => {
@@ -217,39 +232,78 @@ impl RequestClient {
             }
         };
 
-        let ech_client = match ech_lookup.ech_config {
-            Some(ech_config) => match build_reqwest_client(
-                &self.settings,
-                &self.runtime,
-                Some(ech_config.as_slice()),
-            ) {
-                Ok(client) => Some(client),
-                Err(error) => {
-                    if self.settings.require_ech {
-                        return Err(error);
+        // T1：决策与写入合并为单次写锁，消除并发覆盖竞态。
+        // 新 config 与缓存条目一致时复用现有 client（保留 HTTP/2 连接池
+        // 与 TLS 会话缓存，避免每次 TTL 过期都重建 client），仅刷新过期时间
+        let mut guard = self.runtime.ech_clients.write().await;
+        match ech_lookup.ech_config.as_ref() {
+            Some(ech_config) => {
+                if let Some(cached) = guard.get(&host) {
+                    if ech_client_reusable(cached, ech_config) {
+                        // 先 clone 再插入（避免对 guard 的同时可变/不可变借用）
+                        let cached_client = cached.client.clone();
+                        let cached_config = cached.ech_config.clone();
+                        guard.insert(
+                            host.clone(),
+                            EchClientCacheEntry {
+                                client: cached_client.clone(),
+                                expires_at: Instant::now() + ech_lookup.ttl,
+                                ech_config: cached_config,
+                            },
+                        );
+                        return Ok(cached_client.unwrap_or_else(|| self.client.clone()));
                     }
-                    return Ok(self.client.clone());
                 }
-            },
+
+                let ech_client = match build_reqwest_client(
+                    &self.settings,
+                    &self.runtime,
+                    Some(ech_config.as_slice()),
+                ) {
+                    Ok(client) => Some(client),
+                    Err(error) => {
+                        if self.settings.require_ech {
+                            return Err(error);
+                        }
+                        return Ok(self.client.clone());
+                    }
+                };
+
+                guard.insert(
+                    host.clone(),
+                    EchClientCacheEntry {
+                        client: ech_client.clone(),
+                        expires_at: Instant::now() + ech_lookup.ttl,
+                        ech_config: ech_config.clone(),
+                    },
+                );
+
+                Ok(ech_client.unwrap_or_else(|| self.client.clone()))
+            }
             None => {
                 if self.settings.require_ech {
                     return Err(RhttpError::RhttpUnknownError(
                         "ECH is required but no ECH config was found".to_string(),
                     ));
                 }
-                None
+                guard.insert(
+                    host.clone(),
+                    EchClientCacheEntry {
+                        client: None,
+                        expires_at: Instant::now() + ech_lookup.ttl,
+                        ech_config: Vec::new(),
+                    },
+                );
+                Ok(self.client.clone())
             }
-        };
+        }
+    }
 
-        self.runtime.ech_clients.write().await.insert(
-            host,
-            EchClientCacheEntry {
-                client: ech_client.clone(),
-                expires_at: Instant::now() + ech_lookup.ttl,
-            },
-        );
-
-        Ok(ech_client.unwrap_or_else(|| self.client.clone()))
+    /// T3：清除指定主机的 ECH client 缓存与共享 config 缓存，
+    /// 强制下一次请求重新 DoH（用于内置 config 被服务器拒绝后的自动重试）
+    pub(crate) async fn invalidate_ech_for(&self, host: &str) {
+        self.runtime.ech_clients.write().await.remove(host);
+        self.runtime.ech.invalidate_config().await;
     }
 
     fn should_try_ech(&self, url: &Url) -> bool {
@@ -285,7 +339,10 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
             .as_ref()
             .filter(|settings| settings.store_cookies)
             .map(|_| Arc::new(Jar::default())),
-        ech: Arc::new(EchTransport::new()?),
+        // T2：跨 RequestClient 全局共享 ECH transport（DoH 查询与 config
+        // 缓存与请求域名无关，PixEz 的 api/oauth/account 三个 client
+        // 共用一份，冷启动只发一次 DoH）
+        ech: EchTransport::shared(),
         ech_clients: RwLock::new(HashMap::new()),
     });
 
@@ -751,12 +808,46 @@ impl Resolve for DynamicResolver {
     }
 }
 
+/// ECH config 缓存条目（T2：与请求域名无关，全局共享）
+struct ConfigCacheEntry {
+    ech_config: Arc<Vec<u8>>,
+    expires_at: Instant,
+}
+
+/// ECH config 缓存状态（T2/T3）
+#[derive(Default)]
+struct CacheState {
+    /// 有效缓存（来自 DoH 或内置 config 的后续刷新结果）
+    entry: Option<Arc<ConfigCacheEntry>>,
+    /// 在途 DoH 查询的通知（Single-Flight：同一时刻全局只有一个查询在跑，
+    /// 查询任务完成时写回缓存并通知所有等待者；等待者被唤醒后重新读缓存）
+    in_flight: Option<Arc<Notify>>,
+    /// 内置 config 是否已被使用（进程内仅冷启动首次兜底用一次，
+    /// 使用后立即后台 DoH 刷新；避免失效后反复命中失败路径）
+    builtin_used: bool,
+}
+
+#[derive(Clone)]
 struct EchTransport {
     ech_endpoint: Url,
     client: reqwest::Client,
+    /// T3：编译期内置的 Cloudflare ECH config（进程首次请求冷启动兜底）
+    builtin_config: Option<Vec<u8>>,
+    cache: Arc<Mutex<CacheState>>,
 }
 
 impl EchTransport {
+    /// 全局共享实例：跨 RequestClient 复用 DoH 查询与 ECH config 缓存
+    ///（config 与请求域名无关；DoH client 构建失败时降级为内置 config 兜底）
+    fn shared() -> Arc<EchTransport> {
+        static GLOBAL: OnceLock<Arc<EchTransport>> = OnceLock::new();
+        GLOBAL
+            .get_or_init(|| {
+                Arc::new(EchTransport::new().unwrap_or_else(|_| EchTransport::builtin_only()))
+            })
+            .clone()
+    }
+
     fn new() -> Result<Self, RhttpError> {
         let ech_endpoint = Url::parse(ALIDNS_RESOLVE_ENDPOINT)
             .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
@@ -768,18 +859,144 @@ impl EchTransport {
             // avoids depending on the Android JNI platform-verifier init, which
             // is why the bootstrap query failed on Android but not iOS.
             .tls_certs_only(webpki_root_certs()?)
+            // T2：DoH 查询加超时——避免 223.5.5.5 无响应时请求无限挂起
+            .connect_timeout(StdDuration::from_secs(5))
+            .timeout(StdDuration::from_secs(10))
             .build()
             .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
 
         Ok(Self {
             ech_endpoint,
             client,
+            builtin_config: decode_builtin_ech_config(),
+            cache: Arc::new(Mutex::new(CacheState::default())),
         })
+    }
+
+    /// 降级实例：仅保留内置 config 兜底（DoH client 构建失败时使用，
+    /// 正常路径不会走到这里）
+    fn builtin_only() -> Self {
+        Self {
+            ech_endpoint: Url::parse(ALIDNS_RESOLVE_ENDPOINT)
+                .unwrap_or_else(|_| Url::parse("https://223.5.5.5/resolve").unwrap()),
+            client: reqwest::Client::new(),
+            builtin_config: decode_builtin_ech_config(),
+            cache: Arc::new(Mutex::new(CacheState::default())),
+        }
     }
 
     async fn lookup_ech_config(&self, _host: &str) -> Result<EchLookupResult, RhttpError> {
         // pixiv's ECH front is served via cloudflare-ech.com; resolve the ECH
         // config from that bootstrap host regardless of the requested host.
+        // 等待在途查询的兜底超时：查询任务异常挂起/panic 时（例如运行时
+        // 内部错误）等待者最坏等 15s 后自行重新发起查询，避免永久挂起
+        //（DoH 请求自身有 10s 总超时，正常路径不会触发该兜底）
+        const WAIT_TIMEOUT: StdDuration = StdDuration::from_secs(15);
+
+        loop {
+            let notify = {
+                let mut guard = self.cache.lock().await;
+                let now = Instant::now();
+
+                // 1. 有效缓存命中（entry 可能来自 DoH 或内置 config 的后台刷新）
+                if let Some(entry) = guard.entry.as_ref() {
+                    if entry.expires_at > now {
+                        return Ok(EchLookupResult {
+                            ech_config: Some(entry.ech_config.as_ref().to_vec()),
+                            ttl: entry.expires_at - now,
+                        });
+                    }
+                }
+
+                // 2. 已有在途查询：等待其完成（Single-Flight，避免惊群；
+                //    唤醒后重新进入循环读取结果）
+                if let Some(notify) = guard.in_flight.as_ref() {
+                    Some(notify.clone())
+                } else {
+                    // 3. T3：进程内首次查询直接用内置 config 立即建连
+                    //（零 DoH 往返延迟），同时后台异步 DoH 刷新缓存
+                    if !guard.builtin_used {
+                        if let Some(builtin) = self.builtin_config.clone() {
+                            guard.builtin_used = true;
+                            let notify = Arc::new(Notify::new());
+                            spawn_ech_lookup(self.clone(), notify.clone());
+                            guard.in_flight = Some(notify);
+                            return Ok(EchLookupResult {
+                                ech_config: Some(builtin),
+                                ttl: BUILTIN_ECH_CONFIG_FALLBACK_TTL,
+                            });
+                        }
+                    }
+
+                    // 4. 发起 DoH 查询
+                    let notify = Arc::new(Notify::new());
+                    spawn_ech_lookup(self.clone(), notify.clone());
+                    guard.in_flight = Some(notify.clone());
+                    Some(notify)
+                }
+            };
+
+            if let Some(notify) = notify {
+                // 等待查询任务完成（complete_lookup 会写回缓存并通知）
+                let waited = tokio::time::timeout(WAIT_TIMEOUT, notify.notified()).await;
+                if waited.is_err() {
+                    // 查询任务疑似挂死（正常路径有 10s DoH 总超时不会走到
+                    // 这）：清除在途标记，允许下一次循环重新发起查询
+                    let mut guard = self.cache.lock().await;
+                    if guard
+                        .in_flight
+                        .as_ref()
+                        .map(|n| Arc::ptr_eq(n, &notify))
+                        .unwrap_or(false)
+                    {
+                        guard.in_flight = None;
+                    }
+                }
+                continue;
+            }
+            // 分支 2/4 必返回 Some；分支 1/3 已直接 return
+            unreachable!()
+        }
+    }
+
+    /// T3：清除共享 config 缓存与在途查询（强制下一次查询重新 DoH；
+    /// 在途查询任务完成后会因通知不匹配而自动丢弃结果）
+    async fn invalidate_config(&self) {
+        let mut guard = self.cache.lock().await;
+        guard.entry = None;
+        guard.in_flight = None;
+    }
+
+    /// 查询任务完成后的写回：若 in_flight 仍指向本任务的通知则清除
+    /// 标记并写入结果缓存，然后唤醒所有等待者；已被 invalidate 则丢弃
+    async fn complete_lookup(
+        &self,
+        notify: &Arc<Notify>,
+        result: Result<EchLookupResult, RhttpError>,
+    ) {
+        let mut guard = self.cache.lock().await;
+        let is_current = guard
+            .in_flight
+            .as_ref()
+            .map(|n| Arc::ptr_eq(n, notify))
+            .unwrap_or(false);
+        if !is_current {
+            return;
+        }
+        guard.in_flight = None;
+        if let Ok(lookup) = &result {
+            if let Some(config) = lookup.ech_config.as_ref() {
+                guard.entry = Some(Arc::new(ConfigCacheEntry {
+                    ech_config: Arc::new(config.clone()),
+                    expires_at: Instant::now() + lookup.ttl,
+                }));
+            }
+        }
+        // 即使查询失败也要唤醒等待者（唤醒后重新走查询循环）
+        notify.notify_waiters();
+    }
+
+    async fn do_doh_lookup(&self) -> Result<EchLookupResult, RhttpError> {
         let parsed = self.lookup_alidns_https_ech(ECH_BOOTSTRAP_HOST).await?;
         Ok(EchLookupResult {
             ech_config: Some(parsed.ech),
@@ -815,6 +1032,30 @@ impl EchTransport {
 
         parse_alidns_https_ech_response(body.as_ref())
     }
+}
+
+/// 启动一个后台 DoH 查询任务（T2：Single-Flight 的在途查询载体）。
+/// cache 为 Arc<Mutex> 共享，clone 出的 transport 副本共享同一缓存；
+/// 任务完成后写回结果并通过 notify 唤醒所有等待者
+fn spawn_ech_lookup(transport: EchTransport, notify: Arc<Notify>) {
+    tokio::spawn(async move {
+        let result = transport.do_doh_lookup().await;
+        transport.complete_lookup(&notify, result).await;
+    });
+}
+
+/// 解码编译期内置的 ECH config（T3）。失败（常量损坏）时返回 None，
+/// 查询路径会退回常规 DoH
+fn decode_builtin_ech_config() -> Option<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(BUILTIN_ECH_CONFIG_BASE64)
+        .ok()
+}
+
+/// T1：判断缓存条目是否可复用——新 config 与条目中 config 一致则复用
+/// 现有 client（保留 HTTP/2 连接池与 TLS 会话缓存），仅刷新过期时间
+fn ech_client_reusable(cached: &EchClientCacheEntry, new_config: &[u8]) -> bool {
+    cached.ech_config == new_config
 }
 
 fn full_error_chain(err: &(dyn std::error::Error + 'static)) -> String {
@@ -947,4 +1188,92 @@ pub fn create_dynamic_resolver_sync(
     DnsSettings::DynamicDns(DynamicDnsSettings {
         resolver: Arc::new(resolver),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 测试环境安装默认 CryptoProvider（EchConfig::new 解析需要）
+    fn ensure_crypto_provider() {
+        static ONCE: OnceLock<()> = OnceLock::new();
+        ONCE.get_or_init(|| {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        });
+    }
+
+    #[test]
+    fn test_decode_builtin_ech_config() {
+        let config = decode_builtin_ech_config().expect("内置 config 应可解码");
+        assert!(!config.is_empty());
+        // ECHConfigList 结构：u16 总长度 + ECHConfig[]（首个 ECHConfig
+        // 的 version 字段为 0xFE0D，位于偏移 2）
+        assert_eq!(
+            u16::from_be_bytes([config[0], config[1]]) as usize,
+            config.len() - 2,
+            "内置 config 长度字段应自洽"
+        );
+        assert_eq!(&config[2..4], &[0xFE, 0x0D], "内置 config 应为 ECHConfigList 格式");
+        // 且能被 rustls 解析为有效 ECH config（T3 兜底可用性）
+        ensure_crypto_provider();
+        let ech = EchConfig::new(EchConfigListBytes::from(config), ALL_SUPPORTED_SUITES);
+        assert!(ech.is_ok(), "内置 config 应可被 rustls 解析: {ech:?}");
+    }
+
+    #[test]
+    fn test_ech_client_reusable() {
+        // T1：仅当新 config 与缓存条目一致时才复用现有 client
+        let entry = EchClientCacheEntry {
+            client: Some(reqwest::Client::new()),
+            expires_at: Instant::now(),
+            ech_config: vec![1, 2, 3],
+        };
+        assert!(ech_client_reusable(&entry, &[1, 2, 3]), "相同 config 应复用");
+        assert!(
+            !ech_client_reusable(&entry, &[1, 2, 4]),
+            "不同 config 应重建"
+        );
+        assert!(
+            !ech_client_reusable(&entry, &[]),
+            "空 config（查询无结果）不应视为复用"
+        );
+    }
+
+    #[test]
+    fn test_parse_alidns_https_ech_response() {
+        // 2026-08-30 从 223.5.5.5 获取的真实响应（ech 字段与
+        // BUILTIN_ECH_CONFIG_BASE64 同源）
+        let body = br#"{"Status":0,"TC":false,"RD":true,"RA":true,"Question":[{"name":"cloudflare-ech.com.","type":65}],"Answer":[{"name":"cloudflare-ech.com.","TTL":192,"type":65,"data":"1 . alpn=\"h3,h2\" ipv4hint=\"104.18.10.118,104.18.11.118\" ech=\"AEX+DQBBRAAgACCnLwJmLitMBK1QAaEjyUWooIefQjI8u06YMkWVcYiNQAAEAAEAAQASY2xvdWRmbGFyZS1lY2guY29tAAA=\" ipv6hint=\"2606:4700::6812:a76,2606:4700::6812:b76\""}]}"#;
+        let parsed = parse_alidns_https_ech_response(body).expect("真实响应应成功解析");
+        assert_eq!(parsed.ttl, StdDuration::from_secs(192));
+        // 解析出的 ech 字节应与内置 config 一致（同一数据源）
+        assert_eq!(parsed.ech, decode_builtin_ech_config().unwrap());
+    }
+
+    #[test]
+    fn test_extract_https_svc_param() {
+        let data = r#"1 . alpn="h3,h2" ech="AEX+DQ" ipv4hint="1.2.3.4""#;
+        assert_eq!(extract_https_svc_param(data, "ech"), Some("AEX+DQ"));
+        assert_eq!(extract_https_svc_param(data, "alpn"), Some("h3,h2"));
+        assert_eq!(extract_https_svc_param(data, "ipv4hint"), Some("1.2.3.4"));
+        assert_eq!(extract_https_svc_param(data, "missing"), None);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_builtin_cold_start() {
+        // T3：进程内首次查询应无网络依赖地立即返回内置 config（冷启动
+        // 零 DoH 往返）；后台刷新任务在 runtime 结束时自动取消
+        let transport = EchTransport::builtin_only();
+        let first = transport
+            .lookup_ech_config("app-api.pixiv.net")
+            .await
+            .expect("内置 config 冷启动应成功");
+        let config = first.ech_config.expect("应返回内置 config");
+        assert_eq!(config, decode_builtin_ech_config().unwrap());
+        // 内置 config 只在首次兜底；第二次查询应走 DoH 路径（无网络时
+        // 会失败），builtin_used 标记已置位
+        let mut guard = transport.cache.lock().await;
+        assert!(guard.builtin_used, "内置 config 使用后应标记 builtin_used");
+        drop(guard);
+    }
 }

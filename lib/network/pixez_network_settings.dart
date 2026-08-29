@@ -23,6 +23,14 @@ class PixezNetworkSettings {
           rootCertSource: r.RootCertSource.webpki,
           sni: true,
         ),
+        // ECH 模式保活：切后台一段时间后 NAT/服务端会断开空闲连接，
+        // 回来时首请求会撞死连接卡顿。keepAlive 只作用于已建立的空闲
+        // 连接（TCP keepalive + HTTP/2 PING），不影响首连与慢请求，
+        // 与 compatible 模式曾回滚的 connectTimeout/总超时语义零重叠
+        timeoutSettings: r.TimeoutSettings(
+          keepAliveTimeout: const Duration(seconds: 60),
+          keepAlivePing: const Duration(seconds: 25),
+        ),
         dnsSettings: r.DnsSettings.static(
           overrides: {
             appApiHost: ['104.18.10.118', '104.18.11.118'],
