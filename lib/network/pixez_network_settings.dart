@@ -54,25 +54,45 @@ class PixezNetworkSettings {
         resolver: (host) async {
           try {
             // 第 1 层：硬编码 IP 池（实测可用，最快）。
-            // 探测结果带 5 分钟 TTL 缓存，避免每个请求重复探测
+            // 探测结果带 TTL 缓存，避免每个请求重复探测
             final pool = _poolFor(host);
+            var poolFailed = false;
             if (pool.isNotEmpty) {
               final alive = await Hoster.tcpProbeCached(pool);
-              if (alive.isNotEmpty) return alive;
+              if (alive.isNotEmpty) {
+                // 按快速测速结果排序：优先返回低延迟 IP
+                //（reqwest 按返回顺序尝试连接，首个存活即被使用）
+                return Hoster.orderedIps(host, alive);
+              }
+              // 池全部探测失败：记录状态，第 2 层不再过滤池成员——
+              // pixiv 源站 IP 集中在同一 C 段，池死不代表 DoH 缓存中
+              // 的同段 IP 也死；原实现按"池成员"过滤会把存活 IP 一并
+              // 滤掉，导致直接落入被污染的系统 DNS
+              poolFailed = true;
             }
 
             // 第 2 层：DoH 动态缓存（跨代理预热，自动适应 IP 迁移）。
-            // 过滤掉池中已探测失败的 IP，避免对死 IP 重复探测白耗时间
-            final cached =
-                Hoster.cachedIps(host).where((ip) => !pool.contains(ip)).toList();
+            // 仅当池探测存活（不会走到这）或池为空时排除池成员；
+            // 池全部失败时保留全部 DoH 缓存 IP 参与探测
+            final cached = Hoster.cachedIps(host)
+                .where((ip) => poolFailed || !pool.contains(ip))
+                .toList();
             if (cached.isNotEmpty) {
-              final alive = await Hoster.tcpProbeCached(cached);
-              if (alive.isNotEmpty) return alive;
+              // 与第 3 层系统 DNS 并行：最坏延迟从串行 ~4s 降至 ~2s
+              final results = await Future.wait([
+                Hoster.tcpProbeCached(cached),
+                _systemLookup(host),
+              ]);
+              if (results[0].isNotEmpty) {
+                // 按快速测速结果排序（同上）
+                return Hoster.orderedIps(host, results[0]);
+              }
+              if (results[1].isNotEmpty) return results[1];
+              return const [];
             }
 
-            // 第 3 层：系统 DNS
-            final v = await InternetAddress.lookup(host);
-            return v.map((e) => e.address).toList();
+            // 第 3 层：系统 DNS（无 DoH 缓存时）
+            return _systemLookup(host);
           } catch (_) {
             // 断网/切换网络时系统 DNS 解析会抛 SocketException。
             // 绝不能把异常抛给 rhttp：frb 会将 Dart 异常回传给 Rust 侧
@@ -84,6 +104,16 @@ class PixezNetworkSettings {
         },
       ),
     );
+  }
+
+  /// 系统 DNS 解析（带异常兜底：断网抛 SocketException 时返回空）
+  static Future<List<String>> _systemLookup(String host) async {
+    try {
+      final v = await InternetAddress.lookup(host);
+      return v.map((e) => e.address).toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// 从硬编码池返回候选 IP（仅已知域名）

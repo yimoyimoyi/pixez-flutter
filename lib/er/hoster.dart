@@ -12,11 +12,12 @@ import 'package:pixez/main.dart';
 import 'package:pixez/models/onezero_response.dart';
 import 'package:rhttp/rhttp.dart' as r;
 
-/// TCP 探测结果缓存条目（TTL 5 分钟）
+/// TCP 探测结果缓存条目（TTL 按结果类型区分：非空 5 分钟/空 30 秒）
 class _ProbeCacheEntry {
   final DateTime time;
   final List<String> alive;
-  _ProbeCacheEntry(this.time, this.alive);
+  final Duration ttl;
+  _ProbeCacheEntry(this.time, this.alive, this.ttl);
 }
 
 class Hoster {
@@ -36,33 +37,48 @@ class Hoster {
     "https://130.59.31.251/dns-query", // switch.ch DNS (备)
   ];
 
-  /// Pixiv API 源站 IP 池（2026-06-17 实测 SNI_OFF 可用）
-  /// .154/.156-.161：app-api + oauth 均正常
-  /// .162：app-api 正常，oauth 超时，移除
-  /// .155：已死，移除
-  /// .137/.138/.149/.150：API 返回 421，移至图片池
+  /// Pixiv API 源站 IP 池（2026-08-30 综合更新）：
+  /// - 用户网络直连实测（PixivToolkit 08-23）：161/151/162/157/153/154
+  ///   可用，延迟 115-146ms → 新增 151/153/162
+  /// - 池中原有 156/158/159/160 保留（06-17 实测正常；app-api 与
+  ///   www.pixiv.net 解析集不同，用户环境工作正常）
+  /// 2026-08-30 核查：Google DoH 解析 app-api 已指向 Cloudflare
+  /// （104.18.42.239/172.64.145.17），但实测 SNI off（compat 模式）下
+  /// Cloudflare 在 TLS 层直接拒绝（SEC_E_ILLEGAL_MESSAGE），不可入池；
+  /// 代理出口探测本池 IP 均为 HTTP 421（出口 IP 信誉问题，非 IP 死亡）
   static const _apiIpPool = [
+    '210.140.139.161',
+    '210.140.139.151',
+    '210.140.139.162',
+    '210.140.139.157',
+    '210.140.139.153',
     '210.140.139.154',
     '210.140.139.156',
-    '210.140.139.157',
     '210.140.139.158',
     '210.140.139.159',
     '210.140.139.160',
-    '210.140.139.161',
   ];
 
-  /// Pixiv 图片源站 IP 池（2026-06-17 实测 SNI_OFF 可用，全 10 个 OK）
+  /// Pixiv 图片源站 IP 池（2026-08-30 综合更新）：
+  /// - 用户网络直连实测（PixivToolkit 08-23）：135/134/150/149/132/
+  ///   136/137/131/133 可用，延迟 115-143ms
+  /// - Google DoH 权威解析（08-30）：129-138（129/130 为 DNS 新增）
+  /// - 149/150 已从 DNS 移除但物理可用（硬编码池不依赖 DNS，保留）；
+  ///   129/130 为 DNS 新增（保留，等待实测确认）
+  /// 按实测延迟排序（并行探测不受池大小影响）
   static const _imageIpPool = [
-    '210.140.139.131',
-    '210.140.139.132',
-    '210.140.139.133',
-    '210.140.139.134',
     '210.140.139.135',
+    '210.140.139.134',
+    '210.140.139.150',
+    '210.140.139.149',
+    '210.140.139.132',
     '210.140.139.136',
     '210.140.139.137',
+    '210.140.139.131',
+    '210.140.139.133',
+    '210.140.139.129',
+    '210.140.139.130',
     '210.140.139.138',
-    '210.140.139.149',
-    '210.140.139.150',
   ];
   static Map<String, dynamic> hardMap() {
     return _map.isEmpty ? _constMap : _map;
@@ -114,6 +130,9 @@ class Hoster {
   }
 
   static Future<void> dnsQueryAll() async {
+    // 顺带预热 IP 测速（fire-and-forget，不阻塞 DoH 查询）：
+    // 启动后 ~1s 内完成测速，首次请求即可使用排序结果
+    prewarmLatency();
     for (var key in [
       ImageHost,
       ImageSHost,
@@ -231,10 +250,98 @@ class Hoster {
 
   /// TCP 探测结果缓存：同一 IP 组合在 TTL 内不重复探测。
   /// 解决瀑布流滚动时每个请求都做 7~17 次探测的问题；
-  /// 网络故障时的空结果也被缓存，避免每次请求都阻塞等待探测超时。
+  /// 网络故障时的空结果被短 TTL 缓存，避免每次请求都阻塞等待探测超时
+  ///（且断网恢复后能快速重新探测，避免"5 分钟直连假死"）。
   static final Map<String, _ProbeCacheEntry> _probeCache = {};
+  /// 非空结果 TTL：5 分钟
   static const Duration _probeCacheTtl = Duration(minutes: 5);
+  /// 空结果（探测全失败）短 TTL：30 秒——断网/切网恢复后能快速重探
+  static const Duration _probeCacheEmptyTtl = Duration(seconds: 30);
   static const int _probeCacheMaxEntries = 64;
+  /// in-flight 探测去重：缓存 miss 期间并发请求共享同一次探测，
+  /// 避免首屏 N 个请求各自发起完整探测（探测风暴）
+  static final Map<String, Future<List<String>>> _inflight = {};
+
+  /// IP 延迟测速缓存：host → (按延迟升序排序的 IP, 测速时间)。
+  /// 快速测速结果用于 resolver 优先返回快 IP（reqwest 按返回顺序
+  /// 尝试连接，首个存活 IP 即被使用）
+  static final Map<String, (List<String>, DateTime)> _latencyCache = {};
+  /// 测速结果缓存 TTL：30 分钟——期间零测速开销；
+  /// 过期后复用旧排序并后台刷新（懒触发，不阻塞请求路径）
+  static const Duration _latencyTtl = Duration(minutes: 30);
+  /// 测速 in-flight 去重：并发 miss 只触发一次测速
+  static final Map<String, Future<void>> _latencyInflight = {};
+
+  /// 后台触发一次测速刷新（带 in-flight 去重，不阻塞调用方）
+  static void _refreshLatency(String host, List<String> ips) {
+    if (_latencyInflight.containsKey(host)) return;
+    final future = measureLatency(ips).then((sorted) {
+      if (sorted.isNotEmpty) {
+        _latencyCache[host] = (sorted, DateTime.now());
+      }
+    });
+    _latencyInflight[host] = future;
+    future.whenComplete(() => _latencyInflight.remove(host));
+  }
+
+  /// 快速测速：并行测量各 IP 的 TCP 443 连接延迟（毫秒），
+  /// 按延迟升序返回可达 IP（不可达 IP 排除）。
+  /// 轻量：单个超时 1s，并行执行，不阻塞调用方
+  static Future<List<String>> measureLatency(
+    List<String> ips, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    final results = await Future.wait(ips.map((ip) async {
+      final sw = Stopwatch()..start();
+      try {
+        final s = await Socket.connect(ip, 443, timeout: timeout);
+        await s.close();
+        return (ip, sw.elapsedMilliseconds);
+      } catch (_) {
+        return (ip, -1);
+      }
+    }));
+    final alive = results.where((r) => r.$2 >= 0).toList()
+      ..sort((a, b) => a.$2.compareTo(b.$2));
+    return alive.map((r) => r.$1).toList();
+  }
+
+  /// 获取测速排序后的 IP 列表：
+  /// - 缓存 TTL 内命中：直接返回排序结果（零开销）
+  /// - 过期但有历史排序：复用旧排序并后台重测（下次请求用新结果）
+  /// - 无历史（首次）：返回原顺序（不阻塞请求路径）+ 后台首次测速
+  static List<String> orderedIps(String host, List<String> ips) {
+    if (ips.isEmpty) return ips;
+    final entry = _latencyCache[host];
+    if (entry != null) {
+      if (DateTime.now().difference(entry.$2) < _latencyTtl) {
+        return entry.$1;
+      }
+      _refreshLatency(host, ips);
+      return entry.$1;
+    }
+    _refreshLatency(host, ips);
+    return ips;
+  }
+
+  /// 启动预热：对 API/图片池各测速一次，写入 4 个域名缓存。
+  /// 首次请求即可用排序结果（无需等待懒触发）
+  static void prewarmLatency() {
+    Future<void> warm(List<String> pool, List<String> hosts) async {
+      final sorted = await measureLatency(pool);
+      if (sorted.isNotEmpty) {
+        final now = DateTime.now();
+        for (final h in hosts) {
+          _latencyCache[h] = (sorted, now);
+        }
+      }
+    }
+
+    // 按池去重：api/oauth 共用 API 池，i.pximg/s.pximg 共用图片池
+    warm(_apiIpPool.toList(),
+        ['app-api.pixiv.net', 'oauth.secure.pixiv.net']);
+    warm(_imageIpPool.toList(), [ImageHost, ImageSHost]);
+  }
 
   /// 带缓存的探测（结果与 IP 顺序无关）
   static Future<List<String>> tcpProbeCached(
@@ -244,15 +351,33 @@ class Hoster {
     if (ips.isEmpty) return const [];
     final key = ([...ips]..sort()).join(',');
     final entry = _probeCache[key];
-    if (entry != null &&
-        DateTime.now().difference(entry.time) < _probeCacheTtl) {
+    if (entry != null && DateTime.now().difference(entry.time) < entry.ttl) {
       return entry.alive;
     }
+    // in-flight 去重：已有同组合探测在途则直接等待其结果
+    final inFlight = _inflight[key];
+    if (inFlight != null) return inFlight;
+    final future = _doProbe(key, ips, timeout);
+    _inflight[key] = future;
+    try {
+      return await future;
+    } finally {
+      _inflight.remove(key);
+    }
+  }
+
+  static Future<List<String>> _doProbe(
+      String key, List<String> ips, Duration timeout) async {
     final alive = await tcpProbe(ips, timeout: timeout);
     if (_probeCache.length >= _probeCacheMaxEntries) {
       _probeCache.clear(); // 超限整体清空，简单防膨胀
     }
-    _probeCache[key] = _ProbeCacheEntry(DateTime.now(), alive);
+    _probeCache[key] = _ProbeCacheEntry(
+      DateTime.now(),
+      alive,
+      // 空结果短 TTL：断网恢复后快速重探；非空维持 5 分钟
+      alive.isEmpty ? _probeCacheEmptyTtl : _probeCacheTtl,
+    );
     return alive;
   }
 
