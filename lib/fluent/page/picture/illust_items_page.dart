@@ -58,14 +58,16 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
   final ScrollController scrollController = ScrollController();
   bool tempView = false;
 
+  // 详情页专用协调器：忽略全局暂停（详情大图在暂停期间仍须加载），
+  // 并限制详情页自身大图的并发，避免多图滚动时 N 张原图同时下载
+  late final ImageLoadCoordinator _detailCoordinator;
+
   @override
   void initState() {
     // widget.relay.more =
     //     () => buildshowBottomSheet(context, _illustStore.illusts!);
 
-    // 详情页打开期间冻结列表协调器队列，避免栈下的列表页
-    // 继续抓取屏外缩略图与详情大图争连接
-    ImageLoadCoordinator.enterDetailMode();
+    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
     illustStore = widget.store ?? IllustStore(widget.id, null);
     illustStore.fetch();
     aboutStore = IllustAboutStore(widget.id, refreshController);
@@ -96,7 +98,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
 
   @override
   void dispose() {
-    ImageLoadCoordinator.exitDetailMode();
+    _detailCoordinator.dispose();
     illustStore.dispose();
     scrollController.dispose();
     refreshController.dispose();
@@ -106,8 +108,13 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return ScaffoldPage(
-      content: Observer(
+    // 详情页打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）；
+    // 子树内图片使用详情页专用协调器（忽略全局暂停、限制详情大图并发）
+    return DetailModeScope(
+      child: ImageCoordinatorScope(
+        coordinator: _detailCoordinator,
+        child: ScaffoldPage(
+          content: Observer(
         builder: (_) {
           if (!tempView)
             for (var i in muteStore.banillusts) {
@@ -188,6 +195,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
             ],
           );
         },
+        ),
+        ),
       ),
     );
   }
@@ -243,9 +252,13 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                   return KeepAlive(
                     // 多图层保活：滚出视野不销毁图片 State，滚回立即恢复显示，
                     // 避免重新走 CachedNetworkImage 加载流程与淡入动画。
-                    // 保活会强引用已解码的 ui.Image（每页 medium 约 8MB），
-                    // 手机端内存有限，超过 8 页不保活（长漫画滚动重建走文件缓存）
-                    keepAlive: data.metaPages.length <= 8,
+                    // 保活会强引用已解码的 ui.Image，手机端内存有限：
+                    // 按解码位图估算总量动态降级，超出内存水位不保活
+                    //（长漫画滚动重建走文件缓存）
+                    keepAlive: _shouldKeepAlive(
+                      data,
+                      MediaQuery.of(context).size.width,
+                    ),
                     child: IllustItem(
                       index,
                       data,
@@ -278,6 +291,18 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
         .toInt();
   }
 
+  /// 保活判定：按解码位图估算内存总量动态降级。
+  /// 保活会强引用已解码 ui.Image（RGBA 4 字节/像素），超过
+  /// [maxKeepAliveBytes] 水位（120MB）时不保活，改走文件缓存重建
+  bool _shouldKeepAlive(Illusts data, double width) {
+    if (data.metaPages.length > 8) return false;
+    final px = (width * MediaQuery.of(context).devicePixelRatio)
+        .clamp(1.0, 2048.0);
+    final estBytesPerPage = px * px * 4;
+    const maxKeepAliveBytes = 120 * 1024 * 1024;
+    return data.metaPages.length * estBytesPerPage < maxKeepAliveBytes;
+  }
+
   Widget buildPicture(Illusts data, double height) {
     return Center(
       child: Builder(
@@ -296,6 +321,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                 tag: widget.heroString,
                 child: PixivImage(
                   url,
+                  // 注册到详情页专用协调器：限制详情大图并发
+                  priorityIndex: 0,
                   width: constraints.maxWidth,
                   height: height,
                   memCacheWidth: _displayCacheWidth(
@@ -354,6 +381,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
           builder: (context, constraints) => NullHero(
             child: PixivImage(
               url,
+              // 注册到详情页专用协调器：限制详情大图并发
+              priorityIndex: index,
               width: constraints.maxWidth,
               memCacheWidth: _displayCacheWidth(
                 context,
@@ -372,6 +401,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
       return LayoutBuilder(
         builder: (context, constraints) => PixivImage(
           url,
+          // 注册到详情页专用协调器：限制详情大图并发
+          priorityIndex: index,
           width: constraints.maxWidth,
           memCacheWidth: _displayCacheWidth(
             context,
@@ -396,6 +427,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
               ? NullHero(
                   child: PixivImage(
                     illust.illustDetailImageUrl(index),
+                    // 注册到详情页专用协调器：限制详情大图并发
+                    priorityIndex: index,
                     memCacheWidth: _displayCacheWidth(
                       context,
                       MediaQuery.of(context).size.width,
@@ -416,6 +449,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
+            // 注册到详情页专用协调器：限制详情大图并发
+            priorityIndex: index,
             memCacheWidth: _displayCacheWidth(
               context,
               MediaQuery.of(context).size.width,
@@ -423,7 +458,9 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
               illust.metaPages[index].imageUrls!.medium,
             ),
             placeWidget: Container(
-              height: 150,
+              // 用传入的布局高度替代写死的 150：
+              // 出图时高度一致，避免占位→真图切换的剧烈跳动
+              height: height,
               child: Center(
                 child: Text(
                   '$index',

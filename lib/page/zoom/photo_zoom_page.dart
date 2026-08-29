@@ -91,7 +91,10 @@ class _PhotoZoomPageState extends State<PhotoZoomPage> {
                 filterQuality: FilterQuality.high,
                 initialScale: PhotoViewComputedScale.contained,
                 heroAttributes: PhotoViewHeroAttributes(tag: url),
-                imageProvider: PixivProvider.url(url),
+                // 按显示宽度限宽解码（≤4096）：避免 5000×7000 原图
+                // 全尺寸解码 140MB 位图的内存尖峰与 ImageCache 驱逐
+                imageProvider:
+                    PixivProvider.url(url, width: _zoomCacheWidth(context)),
                 loadingBuilder: (context, event) => _buildLoading(event),
               ),
             ),
@@ -121,7 +124,10 @@ class _PhotoZoomPageState extends State<PhotoZoomPage> {
                       ? _illusts.metaPages[index].imageUrls!.original
                       : _illusts.metaPages[index].imageUrls!.large;
                   return PhotoViewGalleryPageOptions(
-                    imageProvider: PixivProvider.url(url),
+                    // 按显示宽度限宽解码（≤4096）：避免多页漫画原图
+                    // 全尺寸解码的内存尖峰与 ImageCache 驱逐
+                    imageProvider: PixivProvider.url(
+                        url, width: _zoomCacheWidth(context)),
                     initialScale: PhotoViewComputedScale.contained,
                     heroAttributes: PhotoViewHeroAttributes(tag: url),
                     filterQuality: FilterQuality.high,
@@ -154,6 +160,15 @@ class _PhotoZoomPageState extends State<PhotoZoomPage> {
   }
 
   String nowUrl = "";
+
+  /// 大图查看限宽解码宽度：屏宽 × dpr × 2，上限 4096。
+  /// 4096 内 1:1 细节无损失（如 3000×4028 原图不降采样）；
+  /// 超 4096 的原图降采样解码，位图内存从 140MB 降至 ≤94MB
+  int? _zoomCacheWidth(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    return (w * dpr * 2).round().clamp(1, 4096);
+  }
 
   bool show = false;
   bool shareShow = false;
@@ -321,8 +336,11 @@ class _PhotoZoomPageState extends State<PhotoZoomPage> {
   }
 
   Center _buildLoading(ImageChunkEvent? event) {
-    double value = event == null || event.expectedTotalBytes == null
-        ? 0
+    // 无进度信息时（磁盘缓存命中/解码阶段/图床无 Content-Length 的
+    // chunked 响应）显示不定式转圈环——原实现 value=0 显示静止空环，
+    // 用户以为卡死
+    final value = event == null || event.expectedTotalBytes == null
+        ? null
         : event.cumulativeBytesLoaded / event.expectedTotalBytes!;
     if (value == 1.0) {
       Future.delayed(Duration(milliseconds: 500), () {

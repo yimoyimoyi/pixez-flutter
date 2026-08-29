@@ -1,5 +1,7 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
@@ -44,6 +46,8 @@ class _PictureListPageState extends State<PictureListPage> {
   double _releaseVelocityDx = 0;
   double? _lastMoveDx;
   Duration? _lastMoveTs;
+  // 手势起始时间：平均速度按整段拖拽时长（down→up）计算
+  Duration? _dragStartTs;
 
   // 滑动判定器
   final SwipeEvaluator _swipeEvaluator = const SwipeEvaluator();
@@ -65,12 +69,20 @@ class _PictureListPageState extends State<PictureListPage> {
   }
 
   void _onPointerDown(PointerDownEvent e) {
+    // 鼠标仅主键参与横滑：右键/中键拖拽（文本选择、中键滚动）
+    // 不触发切页——Listener 不参与手势竞技场，需手动过滤
+    if (e.kind == PointerDeviceKind.mouse &&
+        e.buttons != kPrimaryMouseButton) {
+      _pointerDownPos = null;
+      return;
+    }
     _pointerDownPos = e.position;
     _dragActive = false;
     _totalDx = 0;
     _releaseVelocityDx = 0;
     _lastMoveDx = null;
     _lastMoveTs = null;
+    _dragStartTs = e.timeStamp;
     _dragStartPage = nowPosition;
     _dragStartOffset = _pageController.page ?? nowPosition.toDouble();
     _gestureToken++;
@@ -90,7 +102,7 @@ class _PictureListPageState extends State<PictureListPage> {
       // 方向判定：纵向主导（多图页面上下滚动）交给内层滚动，
       // 不激活横向跟手；只有横向主导且超过阈值才跟手
       if (dy.abs() > dx.abs()) return;
-      if (dx.abs() < 36) return; // 横向激活阈值（≈ 2× touch slop）
+      if (dx.abs() < 48) return; // 横向激活阈值（≈ 2.7× touch slop）
       _dragActive = true;
     }
 
@@ -117,11 +129,19 @@ class _PictureListPageState extends State<PictureListPage> {
     _dragActive = false;
     if (!wasActive || _iStores.isEmpty) return;
 
-    // 用瞬时速度判定（无瞬时值则用平均速度兜底）
+    // 用瞬时速度判定（无瞬时值则用平均速度兜底）。
+    // 平均速度取整段拖拽时长（down→up）：原实现用"末次 move→up 间隔"，
+    // 单次 move 快速释放时 durationMs 极小 → 速度虚高 → 小幅横拖误判切页
     final lastTs = _lastMoveTs ?? e.timeStamp;
-    final durationMs = (e.timeStamp - lastTs).inMilliseconds;
+    final dragStartTs = _dragStartTs ?? lastTs;
+    final durationMs = (e.timeStamp - dragStartTs).inMilliseconds;
     final avgV = durationMs > 0 ? _totalDx * 1000 / durationMs : 0.0;
-    final v = _releaseVelocityDx.abs() > 0 ? _releaseVelocityDx : avgV;
+    // 拖拽后停顿（末次 move 距今 >100ms）：瞬时速度视为 0——
+    // 否则静止前的瞬时速度残留，导致"拖住停住再松手"被误判为高速切页
+    final isStale = _lastMoveTs != null &&
+        (e.timeStamp - _lastMoveTs!).inMilliseconds > 100;
+    final effectiveInstantV = isStale ? 0.0 : _releaseVelocityDx;
+    final v = effectiveInstantV.abs() > 0 ? effectiveInstantV : avgV;
     final result = _swipeEvaluator.evaluate(
       totalDx: _totalDx,
       totalDy: 0,
@@ -171,40 +191,43 @@ class _PictureListPageState extends State<PictureListPage> {
   @override
   Widget build(BuildContext context) {
     _pageWidth = MediaQuery.of(context).size.width;
-    return Observer(builder: (_) {
-      // 自定义跟手滑动：Listener 观察式方向判定（不参与手势竞技场，
-      // 内层纵向滚动永远正常）——横向主导才激活跟手，松手后判定
-      //（速度优先/位移兜底）→ 平滑切换或回弹
-      return Listener(
-        onPointerDown: _onPointerDown,
-        onPointerMove: _onPointerMove,
-        onPointerUp: _onPointerUp,
-        onPointerCancel: _onPointerCancel,
-        child: PageView.builder(
-          controller: _pageController,
-          // 恒为 NeverScrollable：跟手与判定完全由本组件驱动
-          physics: const NeverScrollableScrollPhysics(),
-          // 预构建并保留相邻页：慢速滑动到页面边界时页面反复进出视口
-          // 销毁重建，导致图片异步加载闪烁抖动
-          allowImplicitScrolling: true,
-          itemBuilder: (BuildContext context, int index) {
-            if (index == _iStores.length && _lightingStore != null) {
-              return PictureListNextPage(
-                lightingStore: _lightingStore!,
+    // 查看器打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）
+    return DetailModeScope(
+      child: Observer(builder: (_) {
+        // 自定义跟手滑动：Listener 观察式方向判定（不参与手势竞技场，
+        // 内层纵向滚动永远正常）——横向主导才激活跟手，松手后判定
+        //（速度优先/位移兜底）→ 平滑切换或回弹
+        return Listener(
+          onPointerDown: _onPointerDown,
+          onPointerMove: _onPointerMove,
+          onPointerUp: _onPointerUp,
+          onPointerCancel: _onPointerCancel,
+          child: PageView.builder(
+            controller: _pageController,
+            // 恒为 NeverScrollable：跟手与判定完全由本组件驱动
+            physics: const NeverScrollableScrollPhysics(),
+            // 预构建并保留相邻页：慢速滑动到页面边界时页面反复进出视口
+            // 销毁重建，导致图片异步加载闪烁抖动
+            allowImplicitScrolling: true,
+            itemBuilder: (BuildContext context, int index) {
+              if (index == _iStores.length && _lightingStore != null) {
+                return PictureListNextPage(
+                  lightingStore: _lightingStore!,
+                );
+              }
+              final f = _iStores[index];
+              String? tag = nowPosition == index ? widget.heroString : null;
+              return IllustLightingPage(
+                id: f.id,
+                heroString: tag,
+                store: f,
               );
-            }
-            final f = _iStores[index];
-            String? tag = nowPosition == index ? widget.heroString : null;
-            return IllustLightingPage(
-              id: f.id,
-              heroString: tag,
-              store: f,
-            );
-          },
-          itemCount: _iStores.length + 1,
-        ),
-      );
-    });
+            },
+            itemCount: _iStores.length + 1,
+          ),
+        );
+      }),
+    );
   }
 }
 

@@ -154,8 +154,14 @@ class Hoster {
       OnezeroResponse? model;
       for (final server in servers) {
         try {
+          // 直接请求绝对 URL（备用服务器为完整 URL 含 /dns-query 路径）：
+          // 不修改共享 httpClient 的 baseUrl，避免并发请求互相覆盖。
+          // 原实现恒用主服务器 baseUrl，Yandex/switch.ch 备用服务器
+          // 永远不生效
+          final queryUrl =
+              server.contains('/dns-query') ? server : '$server/dns-query';
           Response response = await httpClient.get(
-            '/dns-query',
+            queryUrl,
             options: Options(headers: {'accept': 'application/dns-json'}),
             queryParameters: {'name': name},
           );

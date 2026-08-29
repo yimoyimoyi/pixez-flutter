@@ -19,9 +19,11 @@ import 'package:flutter/widgets.dart';
 class _LoadEntry implements Comparable<_LoadEntry> {
   final String url;
   int priority;
-  final void Function() onReady;
+  // 同一 URL 可能有多个等待组件（重复作品/头像），获槽位时全部唤醒
+  final List<void Function()> onReadyCallbacks;
 
-  _LoadEntry({required this.url, required this.priority, required this.onReady});
+  _LoadEntry(
+      {required this.url, required this.priority, required this.onReadyCallbacks});
 
   @override
   int compareTo(_LoadEntry other) => priority.compareTo(other.priority);
@@ -30,7 +32,13 @@ class _LoadEntry implements Comparable<_LoadEntry> {
 class _ActiveSlot {
   final String url;
   final DateTime startTime;
-  _ActiveSlot({required this.url}) : startTime = DateTime.now();
+  // 同一 URL 的共享者引用计数：多组件并发注册同一 URL 只占一个槽位，
+  // 各方 release/cancel 递减，归零才真正释放，避免共享者误删他人槽位。
+  // 初始值 = 获槽位条目的等待回调数（排队合并的多组件各自占一份引用）
+  int refCount;
+  _ActiveSlot({required this.url, int refCount = 1})
+      : startTime = DateTime.now(),
+        refCount = refCount;
 
   bool get isExpired =>
       DateTime.now().difference(startTime) > const Duration(seconds: 30);
@@ -66,25 +74,57 @@ class ImageLoadCoordinator {
   }
 
   /// 退出详情模式：恢复队列唤醒。
-  /// 暂停期间可能无人释放槽位，需主动 drain 所有实例避免队列卡死
+  /// 暂停期间可能无人释放槽位，需主动 drain 所有实例避免队列卡死。
+  /// 恢复采用分帧节流：直接全量 drain 会在返回列表瞬间制造 N×6 并发
+  /// 尖峰（多个常驻列表 × 每实例立即放满），与"保护连接池"目标相悖
   static void exitDetailMode() {
     if (_detailCount > 0) _detailCount--;
     _globalPaused = _detailCount > 0;
     if (!_globalPaused) {
-      for (final coordinator in _instances.toList()) {
-        coordinator._drainQueue();
+      _scheduleThrottledDrain();
+    }
+  }
+
+  /// 每帧每个实例最多放行的排队者数量（恢复节流）
+  static const int _throttlePerFrame = 2;
+
+  /// 节流恢复：每 16ms（≈一帧）每实例限量放行，直到队列放空或耗尽。
+  /// 用定时器而非帧回调（addPostFrameCallback 在 flutter_test 的 pump
+  /// 中不被驱动，无法测试；16ms 节拍在真实 UI 上同样接近一帧）
+  static void _scheduleThrottledDrain() {
+    var remaining = _instances.toList();
+    void step() {
+      final done = <ImageLoadCoordinator>[];
+      for (final coordinator in remaining) {
+        final released = coordinator._drainQueue(throttle: _throttlePerFrame);
+        if (released < _throttlePerFrame) {
+          done.add(coordinator); // 队列已空或放不满额，无需继续节流
+        }
+      }
+      if (done.isNotEmpty) remaining.removeWhere(done.contains);
+      if (remaining.isNotEmpty) {
+        Timer(const Duration(milliseconds: 16), step);
       }
     }
+
+    step();
   }
 
   /// 创建独立实例：每个列表页持有一个，隔离可视范围与队列状态，
   /// 避免多页面共享全局状态导致优先级错乱与队列饥饿。
-  /// 页面销毁时应调用 [dispose] 释放
-  factory ImageLoadCoordinator.create() => ImageLoadCoordinator._();
+  /// 页面销毁时应调用 [dispose] 释放。
+  /// [ignoreGlobalPause] 为 true 时不受全局暂停影响——供详情页使用：
+  /// 详情页自身的大图在 enterDetailMode 暂停期间仍须加载，否则会因
+  /// 全局暂停入队而永不唤醒（死锁）
+  factory ImageLoadCoordinator.create({bool ignoreGlobalPause = false}) =>
+      ImageLoadCoordinator._(ignoreGlobalPause);
 
-  ImageLoadCoordinator._() {
+  ImageLoadCoordinator._([this.ignoreGlobalPause = false]) {
     _instances.add(this);
   }
+
+  /// 是否忽略全局暂停（enterDetailMode/exitDetailMode）
+  final bool ignoreGlobalPause;
 
   /// 从列表作用域取协调器：子树中存在 [ImageCoordinatorScope] 时使用
   /// 独立实例，否则回退全局实例
@@ -128,11 +168,31 @@ class ImageLoadCoordinator {
   /// 返回 true 表示可以立刻加载（获得槽位）。
   /// 返回 false 表示槽位已满，已加入排队，[onReady] 将在槽位释放时被调用。
   bool register(String url, int basePriority, void Function() onReady) {
-    // 先去重
-    if (_activeUrls.contains(url)) return false;
-    if (_queue.any((e) => e.url == url)) return false;
+    // 去重：同一 URL 已在加载中时，组件共享同一底层加载任务
+    //（Flutter ImageCache 按 key 合并 pending），只记账一次。
+    // 注意：此检查放于暂停门控之前——在飞请求共享不受暂停影响
+    for (final slot in _activeSlots) {
+      if (slot.url == url) {
+        slot.refCount++;
+        return true;
+      }
+    }
+    // 同一 URL 已在排队：追加等待回调，获槽位时一并唤醒
+    if (_queue.any((e) => e.url == url)) {
+      _queue.firstWhere((e) => e.url == url).onReadyCallbacks.add(onReady);
+      return false;
+    }
 
     final priority = _computePriority(basePriority);
+
+    // 详情页暂停期间：新请求直接入队，恢复后统一唤醒（不发起新连接）。
+    // 忽略暂停的实例（详情页自身大图）不受此限制
+    if (_globalPaused && !ignoreGlobalPause) {
+      _queue.add(_LoadEntry(
+          url: url, priority: priority, onReadyCallbacks: [onReady]));
+      _queue.sort();
+      return false;
+    }
 
     if (_activeSlots.length < maxConcurrent) {
       _activeSlots.add(_ActiveSlot(url: url));
@@ -141,21 +201,36 @@ class ImageLoadCoordinator {
       return true;
     }
 
-    _queue.add(_LoadEntry(url: url, priority: priority, onReady: onReady));
+    _queue.add(_LoadEntry(
+        url: url, priority: priority, onReadyCallbacks: [onReady]));
     _queue.sort();
     return false;
   }
 
   /// 释放一个槽位（CachedNetworkImage 加载完成/失败后调用）
   void release(String url) {
-    if (!_activeUrls.remove(url)) return;
+    if (!_activeUrls.contains(url)) return;
+    for (final slot in _activeSlots) {
+      if (slot.url == url) {
+        slot.refCount--;
+        if (slot.refCount > 0) return; // 仍有共享者，不释放
+      }
+    }
+    _activeUrls.remove(url);
     _activeSlots.removeWhere((s) => s.url == url);
     _drainQueue();
   }
 
   /// 取消排队（PixivImage dispose 时调用）
   void cancel(String url) {
-    if (_activeUrls.remove(url)) {
+    if (_activeUrls.contains(url)) {
+      for (final slot in _activeSlots) {
+        if (slot.url == url) {
+          slot.refCount--;
+          if (slot.refCount > 0) return; // 仍有共享者，不释放
+        }
+      }
+      _activeUrls.remove(url);
       _activeSlots.removeWhere((s) => s.url == url);
       _drainQueue();
     } else {
@@ -188,17 +263,29 @@ class ImageLoadCoordinator {
     _queue.sort();
   }
 
-  void _drainQueue() {
+  /// 释放队列中的排队者，返回实际放行数量。
+  /// [throttle] < 0 表示不限量（正常路径）；≥0 时每帧限量（恢复节流）
+  int _drainQueue({int throttle = -1}) {
     // 详情页打开期间不唤醒排队者：详情大图独占连接，返回列表后恢复
-    if (_globalPaused) return;
+    //（忽略暂停的实例——详情页自身——不受此限制）
+    if (_globalPaused && !ignoreGlobalPause) return 0;
+    var released = 0;
     while (_activeSlots.length < maxConcurrent && _queue.isNotEmpty) {
+      if (throttle >= 0 && released >= throttle) break;
       final entry = _queue.removeAt(0);
       if (_activeUrls.contains(entry.url)) continue;
 
-      _activeSlots.add(_ActiveSlot(url: entry.url));
+      // refCount 初始化为等待回调数：合并的同 URL 多组件各自持有一份
+      // 引用，任一组件 release/cancel 只递减自己的，最后一个才释放槽位
+      _activeSlots.add(
+          _ActiveSlot(url: entry.url, refCount: entry.onReadyCallbacks.length));
       _activeUrls.add(entry.url);
-      entry.onReady();
+      for (final onReady in entry.onReadyCallbacks) {
+        onReady();
+      }
+      released++;
     }
+    return released;
   }
 
   /// 超时自动释放：清理超过 [slotTimeoutSeconds] 的槽位
@@ -248,4 +335,37 @@ class ImageCoordinatorScope extends InheritedWidget {
   @override
   bool updateShouldNotify(ImageCoordinatorScope oldWidget) =>
       coordinator != oldWidget.coordinator;
+}
+
+/// 详情页作用域：进入时全局暂停列表协调器队列（enterDetailMode），
+/// 销毁时自动恢复（exitDetailMode）。
+///
+/// 将 enter/exit 封装进 widget 生命周期，替代手写 initState/dispose
+/// 配对：任何页面忘记配对或新增详情页忘记接线时，不会留下永久暂停
+/// 的全局状态。注意：路由仍留在导航栈中（如桌面端临时路由切页签）时
+/// dispose 不会执行，暂停状态随之保留——属已知限制
+class DetailModeScope extends StatefulWidget {
+  final Widget child;
+
+  const DetailModeScope({super.key, required this.child});
+
+  @override
+  State<DetailModeScope> createState() => _DetailModeScopeState();
+}
+
+class _DetailModeScopeState extends State<DetailModeScope> {
+  @override
+  void initState() {
+    super.initState();
+    ImageLoadCoordinator.enterDetailMode();
+  }
+
+  @override
+  void dispose() {
+    ImageLoadCoordinator.exitDetailMode();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

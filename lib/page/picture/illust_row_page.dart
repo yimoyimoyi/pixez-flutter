@@ -25,6 +25,7 @@ import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/star_icon.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/exts.dart';
@@ -72,6 +73,9 @@ class _IllustRowPageState extends State<IllustRowPage>
   late ScrollController _scrollController;
   late EasyRefreshController _refreshController;
   bool tempView = false;
+  // 详情页专用协调器：忽略全局暂停（详情大图在暂停期间仍须加载），
+  // 并限制详情页自身大图的并发
+  late final ImageLoadCoordinator _detailCoordinator;
   @override
   void initState() {
     _refreshController = EasyRefreshController(
@@ -79,6 +83,7 @@ class _IllustRowPageState extends State<IllustRowPage>
       controlFinishRefresh: true,
     );
     _scrollController = ScrollController();
+    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
     _illustStore = widget.store ?? IllustStore(widget.id, null);
     _illustStore.fetch();
     _aboutStore = IllustAboutStore(widget.id, _refreshController);
@@ -129,6 +134,7 @@ class _IllustRowPageState extends State<IllustRowPage>
 
   @override
   void dispose() {
+    _detailCoordinator.dispose();
     _illustStore.dispose();
     _scrollController.dispose();
     _refreshController.dispose();
@@ -183,7 +189,12 @@ class _IllustRowPageState extends State<IllustRowPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
+    // 详情页打开期间冻结列表协调器队列 + 详情页专用协调器
+    //（忽略全局暂停、限制详情大图并发）
+    return DetailModeScope(
+      child: ImageCoordinatorScope(
+        coordinator: _detailCoordinator,
+        child: Scaffold(
       extendBody: true,
       // appBar: AppBar(
       //   elevation: 0.0,
@@ -278,6 +289,8 @@ class _IllustRowPageState extends State<IllustRowPage>
             ),
           );
         },
+        ),
+        ),
       ),
     );
   }
@@ -503,7 +516,17 @@ class _IllustRowPageState extends State<IllustRowPage>
               tag: widget.heroString,
               child: PixivImage(
                 url,
+                // 注册到详情页专用协调器：限制详情大图并发
+                priorityIndex: 0,
                 width: MediaQuery.of(context).size.width,
+                // 按显示宽度解码，避免 5000×7000 全尺寸解码的
+                // 140MB 位图内存与 ImageCache 驱逐
+                memCacheWidth: _displayCacheWidth(
+                  context,
+                  MediaQuery.of(context).size.width,
+                  url,
+                  data.imageUrls.medium,
+                ),
                 placeWidget: (url != data.imageUrls.medium)
                     ? PixivImage(
                         data.imageUrls.medium,
@@ -517,6 +540,21 @@ class _IllustRowPageState extends State<IllustRowPage>
         },
       ),
     );
+  }
+
+  /// 详情大图按显示宽度解码（与 fluent/纵向版一致）：medium 图保持
+  /// 原始解码以复用列表页 ImageCache；大图按屏宽 × dpr 限制（上限 2048）
+  int? _displayCacheWidth(
+    BuildContext context,
+    double width,
+    String url,
+    String mediumUrl,
+  ) {
+    if (url == mediumUrl) return null;
+    return (width * MediaQuery.of(context).devicePixelRatio)
+        .round()
+        .clamp(1, 2048)
+        .toInt();
   }
 
   Center _buildErrorContent(BuildContext context) {
@@ -551,6 +589,14 @@ class _IllustRowPageState extends State<IllustRowPage>
         return NullHero(
           child: PixivImage(
             url,
+            // 注册到详情页专用协调器：限制详情大图并发
+            priorityIndex: index,
+            memCacheWidth: _displayCacheWidth(
+              context,
+              MediaQuery.of(context).size.width,
+              url,
+              illust.metaPages[index].imageUrls!.medium,
+            ),
             placeWidget: PixivImage(
               illust.metaPages[index].imageUrls!.medium,
               width: MediaQuery.of(context).size.width,
@@ -561,7 +607,15 @@ class _IllustRowPageState extends State<IllustRowPage>
         );
       return PixivImage(
         url,
+        // 注册到详情页专用协调器：限制详情大图并发
+        priorityIndex: index,
         width: MediaQuery.of(context).size.width,
+        memCacheWidth: _displayCacheWidth(
+          context,
+          MediaQuery.of(context).size.width,
+          url,
+          illust.metaPages[index].imageUrls!.medium,
+        ),
         placeWidget: Container(
           height: height,
           child: Center(
@@ -578,6 +632,14 @@ class _IllustRowPageState extends State<IllustRowPage>
               ? NullHero(
                   child: PixivImage(
                     illust.illustDetailImageUrl(index),
+                    // 注册到详情页专用协调器：限制详情大图并发
+                    priorityIndex: index,
+                    memCacheWidth: _displayCacheWidth(
+                      context,
+                      MediaQuery.of(context).size.width,
+                      illust.illustDetailImageUrl(index),
+                      illust.metaPages[index].imageUrls!.medium,
+                    ),
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
                     ),
@@ -592,8 +654,18 @@ class _IllustRowPageState extends State<IllustRowPage>
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
+            // 注册到详情页专用协调器：限制详情大图并发
+            priorityIndex: index,
+            memCacheWidth: _displayCacheWidth(
+              context,
+              MediaQuery.of(context).size.width,
+              illust.illustDetailImageUrl(index),
+              illust.metaPages[index].imageUrls!.medium,
+            ),
             placeWidget: Container(
-              height: 150,
+              // 用传入的布局高度替代写死的 150：
+              // 出图时高度一致，避免占位→真图切换的剧烈跳动
+              height: height,
               child: Center(
                 child: Text(
                   '$index',

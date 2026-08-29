@@ -83,6 +83,10 @@ class OAuthClient {
     httpClient = Dio(
       BaseOptions(
         baseUrl: 'https://${BASE_OAUTH_URL_HOST}',
+        // 刷新/登录请求必须有超时：挂起时等待者（RefreshTokenInterceptor）
+        // 依赖超时兜底，否则所有 API 请求会永久 pending
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 20),
         headers: {
           "X-Client-Time": time,
           "X-Client-Hash": getHash(time + hashSalt),

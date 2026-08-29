@@ -245,25 +245,34 @@ class Fetcher {
     if (taskPersist == null) return;
     await taskPersistProvider.update(taskPersist..status = 2);
     File file = File(savePath + Platform.pathSeparator + fileName);
-    final uint8list = await file.readAsBytes();
-    await saveStore.saveToGallery(uint8list, illusts, fileName);
-    Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
-    // 网络下载完成 → 主 isolate 回填浏览缓存（缓存库唯一写入者）。
-    // 缓存命中（cachedFilePath 非空）的任务无需回填，直接跳过
-    if (cachedFilePath == null || cachedFilePath.isEmpty) {
-      try {
-        final uri = Uri.tryParse(url);
-        final path = uri?.path ?? '';
-        final dot = path.lastIndexOf('.');
-        final fileExtension = dot == -1 ? null : path.substring(dot + 1);
-        await pixivCacheManager?.putFileStream(
-          url,
-          file.openRead(),
-          fileExtension: fileExtension ?? 'jpg',
-        );
-      } catch (e) {
-        LPrinter.d("fetcher cache write-back failed: $e");
+    try {
+      final uint8list = await file.readAsBytes();
+      await saveStore.saveToGallery(uint8list, illusts, fileName);
+      Toaster.downloadOk("${illusts.title} ${I18n.of(context!).saved}");
+      // 网络下载完成 → 主 isolate 回填浏览缓存（缓存库唯一写入者）。
+      // 缓存命中（cachedFilePath 非空）的任务无需回填，直接跳过
+      if (cachedFilePath == null || cachedFilePath.isEmpty) {
+        try {
+          final uri = Uri.tryParse(url);
+          final path = uri?.path ?? '';
+          final dot = path.lastIndexOf('.');
+          final fileExtension = dot == -1 ? null : path.substring(dot + 1);
+          await pixivCacheManager?.putFileStream(
+            url,
+            file.openRead(),
+            fileExtension: fileExtension ?? 'jpg',
+          );
+        } catch (e) {
+          LPrinter.d("fetcher cache write-back failed: $e");
+        }
       }
+    } finally {
+      // 清理下载临时文件：保存与缓存回写均已完成（saveToGallery 使用
+      // 内存副本、回写使用流式读取）。此文件位于系统临时目录
+      // （getTemporaryDirectory），不清理会随下载次数持续膨胀磁盘
+      try {
+        await file.delete();
+      } catch (_) {}
     }
     var job = jobMaps[url];
     if (job != null) {
@@ -349,6 +358,7 @@ entryPoint(SendMessage message) async {
         final reload = isoContactBean.data as NetworkReloadMessage;
         currentNetworkMode = reload.networkMode;
         currentPictureSource = reload.source ?? PixezNetworkSettings.imageHost;
+        final oldAdapter = dio.httpClientAdapter;
         final newClient = await r.RhttpCompatibleClient.createSync(
           settings: PixezNetworkSettings.forImages(
             currentPictureSource,
@@ -356,6 +366,11 @@ entryPoint(SendMessage message) async {
           ),
         );
         dio.httpClientAdapter = ConversionLayerAdapter(newClient);
+        // 关闭旧 adapter：释放 rhttp client/连接池/TLS 上下文（与主
+        // isolate 的 938b2064 修复对称，否则每次切换网络模式泄漏一个 client）
+        try {
+          oldAdapter.close(force: true);
+        } catch (_) {}
         return;
       }
       TaskBean taskBean = isoContactBean.data;

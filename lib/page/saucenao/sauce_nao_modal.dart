@@ -566,7 +566,8 @@ class _SauceNaoModalState extends State<SauceNaoModal> {
             itemBuilder: (context, index) {
               final item = _results[index];
               return ListTile(
-                leading: _PixivIllustThumbnail(illustId: item.illustId),
+                leading: _PixivIllustThumbnail(
+                    illustId: item.illustId, thumbnail: item.thumbnail),
                 title: Text(
                   item.title?.isNotEmpty == true
                       ? item.title!
@@ -601,8 +602,10 @@ class _SauceNaoModalState extends State<SauceNaoModal> {
 
 class _PixivIllustThumbnail extends StatefulWidget {
   final int illustId;
+  // SauceNao 返回的网页缩略图：非 Pixiv 来源（illustId 无效）时直接使用
+  final String? thumbnail;
 
-  const _PixivIllustThumbnail({required this.illustId});
+  const _PixivIllustThumbnail({required this.illustId, this.thumbnail});
 
   @override
   State<_PixivIllustThumbnail> createState() => _PixivIllustThumbnailState();
@@ -611,12 +614,22 @@ class _PixivIllustThumbnail extends StatefulWidget {
 class _PixivIllustThumbnailState extends State<_PixivIllustThumbnail> {
   String? _imageUrl;
   bool _loading = true;
-  static bool _authBroken = false;
+  // 实例级失败标记（原 static 会全局永久禁用所有缩略图加载：
+  // 一次 OAuth 类错误即瘫痪整个搜图缩略图功能）。
+  // 实例字段随 State 销毁重建自然复位
+  bool _authBroken = false;
 
   @override
   void initState() {
     super.initState();
-    _fetch();
+    if (widget.illustId <= 0) {
+      // 非 Pixiv 来源：SauceNao 返回的 illustId 无效（0/负值），
+      // 直接使用网页缩略图，不再请求 pixiv API（必然失败）
+      _imageUrl = widget.thumbnail;
+      _loading = false;
+    } else {
+      _fetch();
+    }
   }
 
   @override
@@ -625,7 +638,12 @@ class _PixivIllustThumbnailState extends State<_PixivIllustThumbnail> {
     if (oldWidget.illustId != widget.illustId) {
       _imageUrl = null;
       _loading = true;
-      _fetch();
+      if (widget.illustId <= 0) {
+        _imageUrl = widget.thumbnail;
+        _loading = false;
+      } else {
+        _fetch();
+      }
     }
   }
 

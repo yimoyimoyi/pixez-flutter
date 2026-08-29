@@ -88,7 +88,6 @@ class _PixivImageState extends State<PixivImage> {
   String? _lastKey;
   // 方案 B: 本地缓存回退的图片字节（命中后 Image.memory 直显，零动画）
   Uint8List? _cachedBytes;
-  bool _fromCache = false;
   // CachedNetworkImage 已渲染出图（当前 url）后，禁止 _cachedBytes 再覆盖：
   // 慢磁盘下缓存字节晚于图片显示完成，切换会出现"图变白再淡入"的闪烁
   bool _imageShown = false;
@@ -134,6 +133,11 @@ class _PixivImageState extends State<PixivImage> {
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // memCacheWidth 可能因窗口缩放/屏幕旋转/条目复用而变化：
+    // 无条件同步（与 url 无关），避免 State 字段落后导致解码宽度错误
+    if (oldWidget.memCacheWidth != widget.memCacheWidth) {
+      setState(() => memCacheWidth = widget.memCacheWidth);
+    }
     if (oldWidget.url != widget.url) {
       // 取消旧 URL 的协调器注册
       if (oldWidget.url.isNotEmpty) {
@@ -142,9 +146,7 @@ class _PixivImageState extends State<PixivImage> {
       _retryCount = 0;
       _slotReleased = false;
       _slotTimeoutCount = 0;
-      _cachedBytes = null;
-      _fromCache = false;
-      _imageShown = false;
+      _cachedBytes = null;      _imageShown = false;
       setState(() {
         url = widget.url;
         width = widget.width;
@@ -187,9 +189,7 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes == null &&
             !_imageShown) {
           setState(() {
-            _cachedBytes = Uint8List.fromList(bytes);
-            _fromCache = true;
-          });
+            _cachedBytes = Uint8List.fromList(bytes);          });
         }
       }
     } catch (_) {
@@ -324,6 +324,9 @@ class _PixivImageState extends State<PixivImage> {
               fit: fit ?? BoxFit.fitWidth,
               width: width,
               height: height,
+              // 按显示宽度解码：否则原始大图（如 5000×7000）全尺寸解码，
+              // 单帧可达上百 MB，且以全尺寸条目挤占 ImageCache
+              cacheWidth: memCacheWidth,
               gaplessPlayback: true,
               frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
                 if (wasSynchronouslyLoaded || !fade) return child;
@@ -346,6 +349,10 @@ class _PixivImageState extends State<PixivImage> {
     }
 
     final size = min(min(width ?? 60, height ?? 60), 60.0);
+    // 槽位使命在"请求发出"即完成：构建 CachedNetworkImage（触发 resolve/
+    // 下载）前释放槽位，让队列推进——大图下载+解码全程占槽会阻塞
+    // 第 7+ 张排队（协调器只应限制请求发起并发，而非下载时长）
+    _releaseSlot();
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
       useOldImageOnUrlChange: true,
@@ -455,12 +462,18 @@ class _PixivImageState extends State<PixivImage> {
 }
 
 class PixivProvider {
-  static ImageProvider url(String url, {String? preUrl}) {
-    return CachedNetworkImageProvider(
+  /// [width] 非空时按宽度限制解码尺寸（ResizeImage 包装，ImageCache key
+  /// 含宽度维度）：大图查看器（PhotoZoomPage）传屏宽 × dpr × 2（上限
+  /// 4096），避免 5000×7000 原图全尺寸解码 140MB 位图的内存尖峰与
+  /// ImageCache 驱逐；不传则按原始尺寸解码
+  static ImageProvider url(String url, {String? preUrl, int? width}) {
+    final provider = CachedNetworkImageProvider(
       url,
       headers: Hoster.header(url: preUrl),
       cacheManager: pixivCacheManager,
     );
+    if (width == null || width <= 0) return provider;
+    return ResizeImage(provider, width: width);
   }
 }
 

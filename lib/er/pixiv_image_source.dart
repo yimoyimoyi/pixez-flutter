@@ -125,7 +125,10 @@ class PixivImageSourceInterceptor extends Interceptor {
       networkMode: networkMode(),
       pictureSource: pictureSource(),
     );
-    options.path = resolvedUri.toString();
+    // path 不含 query：dio 组装最终 uri 时会把 queryParameters 追加到
+    // path 后。若 path 已含 query 再 addAll，dio 5.10 的 uri getter 会用
+    // & 再次拼接，导致 ?foo=1&foo=1 重复参数
+    options.path = resolvedUri.replace(query: null).toString();
     options.baseUrl = '';
     if (resolvedUri.hasQuery) {
       options.queryParameters.addAll(resolvedUri.queryParameters);

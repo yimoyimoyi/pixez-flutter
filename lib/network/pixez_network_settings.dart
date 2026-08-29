@@ -43,6 +43,11 @@ class PixezNetworkSettings {
 
   static r.ClientSettings compatible() {
     return r.ClientSettings(
+      // 注意：不设置 timeoutSettings（曾尝试总超时/连接超时，带来两个
+      // 回归后回滚）：① connectTimeout 误杀慢连接（推荐画师头像不加载）；
+      // ② 总超时导致临时息屏（>2 分钟）后挂起的在途请求直接失败。
+      // 挂起兜底由 dio 层 receiveTimeout（30s chunk 间隔）+ 图片组件
+      // _scheduleRetry 退避重试承担
       tlsSettings: r.TlsSettings(verifyCertificates: false, sni: false),
       httpVersionPref: r.HttpVersionPref.http1_1,
       dnsSettings: r.DnsSettings.dynamic(

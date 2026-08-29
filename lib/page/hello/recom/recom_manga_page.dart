@@ -6,6 +6,7 @@ import 'package:pixez/er/leader.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
+import 'package:pixez/page/picture/illust_store.dart';
 
 class RecomMangaPage extends StatefulWidget {
   const RecomMangaPage({Key? key}) : super(key: key);
@@ -61,8 +62,14 @@ class _RecomMangaPageState extends State<RecomMangaPage> {
                       return Card(
                         child: InkWell(
                             onTap: () {
+                              // 传入 store（携带列表已有 Illusts 数据）：
+                              // 详情页无需等 API 即可先渲染首图，避免
+                              // 图片请求被元数据请求串行阻塞
                               Leader.push(
-                                  context, IllustLightingPage(id: illust.id));
+                                  context,
+                                  IllustLightingPage(
+                                      id: illust.id,
+                                      store: IllustStore(illust.id, illust)));
                             },
                             child: PixivImage(illust!.imageUrls.medium)),
                       );

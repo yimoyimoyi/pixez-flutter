@@ -78,9 +78,7 @@ class _SearchPageState extends State<SearchPage>
     if (!mounted) return;
     Navigator.push(
       context,
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => SearchSuggestionPage(),
-      ),
+      PageRouteBuilder(pageBuilder: (_, __, ___) => SearchSuggestionPage()),
     );
   }
 
@@ -237,7 +235,9 @@ class _SearchPageState extends State<SearchPage>
                   final tagPage = _tagPage > maxPage ? maxPage : _tagPage;
                   final start = tagPage * pageSize;
                   final pageTags = targetTags.sublist(
-                      start, (start + pageSize > total) ? total : start + pageSize);
+                    start,
+                    (start + pageSize > total) ? total : start + pageSize,
+                  );
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 5.0),
@@ -247,8 +247,7 @@ class _SearchPageState extends State<SearchPage>
                       children: [
                         Wrap(
                           children: [
-                            for (var f in pageTags)
-                              buildActionChip(f, context),
+                            for (var f in pageTags) buildActionChip(f, context),
                           ],
                           runSpacing: 4.0,
                           spacing: 5.0,
@@ -264,34 +263,36 @@ class _SearchPageState extends State<SearchPage>
                                         ActionChip(
                                           label: Text('上一页'),
                                           padding: EdgeInsets.symmetric(
-                                              horizontal: 4),
+                                            horizontal: 4,
+                                          ),
                                           onPressed: () =>
                                               setState(() => _tagPage--),
                                         ),
                                       Padding(
                                         padding: EdgeInsets.symmetric(
-                                            horizontal: 8),
+                                          horizontal: 8,
+                                        ),
                                         child: Text(
                                           '${tagPage + 1}/${maxPage + 1}',
-                                          style:
-                                              TextStyle(fontSize: 12),
+                                          style: TextStyle(fontSize: 12),
                                         ),
                                       ),
                                       if (tagPage < maxPage)
                                         ActionChip(
                                           label: Text('下一页'),
                                           padding: EdgeInsets.symmetric(
-                                              horizontal: 4),
+                                            horizontal: 4,
+                                          ),
                                           onPressed: () =>
                                               setState(() => _tagPage++),
                                         ),
                                     ]
                                   : [
                                       ActionChip(
-                                        label: Text(
-                                            '展开 (共$total条)'),
+                                        label: Text('展开 (共$total条)'),
                                         padding: EdgeInsets.symmetric(
-                                            horizontal: 4),
+                                          horizontal: 4,
+                                        ),
                                         onPressed: () =>
                                             setState(() => _expanded = true),
                                       ),
@@ -306,14 +307,17 @@ class _SearchPageState extends State<SearchPage>
             ),
           ),
           SliverToBoxAdapter(
-            child: Observer(builder: (context) {
-              if (tagHistoryStore.tags
-                  .where((element) => element.type == null || element.type == 0)
-                  .isNotEmpty)
-                return InkWell(
-                  onTap: () {
-                    HapticUtil.heavy();
-                    showDialog(
+            child: Observer(
+              builder: (context) {
+                if (tagHistoryStore.tags
+                    .where(
+                      (element) => element.type == null || element.type == 0,
+                    )
+                    .isNotEmpty)
+                  return InkWell(
+                    onTap: () {
+                      HapticUtil.heavy();
+                      showDialog(
                         context: context,
                         builder: (context) {
                           return AlertDialog(
@@ -382,92 +386,105 @@ class _SearchPageState extends State<SearchPage>
             ),
           ),
           if (_trendTagsStore.trendTags.isNotEmpty)
-            Observer(builder: (_) {
-              final filtered = _trendTagsStore.trendTags
-                  .where((t) => !muteStore.banTags
-                      .any((b) => b.isRegexMatch(t.tag)))
-                  .toList();
-              if (filtered.isEmpty) return const SliverToBoxAdapter();
-              return SliverPadding(
-                padding: const EdgeInsets.all(8.0),
-                sliver: SliverGrid(
+            Observer(
+              builder: (_) {
+                final filtered = _trendTagsStore.trendTags
+                    .where(
+                      (t) =>
+                          !muteStore.banTags.any((b) => b.isRegexMatch(t.tag)),
+                    )
+                    .toList();
+                if (filtered.isEmpty) return const SliverToBoxAdapter();
+                return SliverPadding(
+                  padding: const EdgeInsets.all(8.0),
+                  sliver: SliverGrid(
                     delegate: SliverChildBuilderDelegate((context, index) {
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.of(context, rootNavigator: true)
-                            .push(MaterialPageRoute(builder: (_) {
-                          return ResultPage(
-                            word: filtered[index].tag,
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.of(context, rootNavigator: true).push(
+                            MaterialPageRoute(
+                              builder: (_) {
+                                return ResultPage(word: filtered[index].tag);
+                              },
+                            ),
                           );
-                        }));
-                      },
-                      onLongPress: () {
-                        Navigator.of(context, rootNavigator: true)
-                            .push(MaterialPageRoute(builder: (_) {
-                          return IllustLightingPage(id: filtered[index].illust.id);
-                        }));
-                      },
-                      child: Card(
-                        clipBehavior: Clip.antiAlias,
-                        shape: const RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.all(Radius.circular(8.0))),
-                        child: Stack(
-                          children: <Widget>[
-                            PixivImage(
-                              filtered[index].illust.imageUrls.squareMedium,
-                              fit: BoxFit.cover,
+                        },
+                        onLongPress: () {
+                          Navigator.of(context, rootNavigator: true).push(
+                            MaterialPageRoute(
+                              builder: (_) {
+                                return IllustLightingPage(
+                                  id: filtered[index].illust.id,
+                                );
+                              },
                             ),
-                            Opacity(
-                              opacity: 0.4,
-                              child: Container(
-                                decoration:
-                                    BoxDecoration(color: Colors.black),
+                          );
+                        },
+                        child: Card(
+                          clipBehavior: Clip.antiAlias,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.all(
+                              Radius.circular(8.0),
+                            ),
+                          ),
+                          child: Stack(
+                            children: <Widget>[
+                              PixivImage(
+                                filtered[index].illust.imageUrls.squareMedium,
+                                fit: BoxFit.cover,
                               ),
-                            ),
-                            Align(
-                            child: Padding(
-                              padding: const EdgeInsets.all(2.0),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: <Widget>[
-                                  Text(
-                                    "#${filtered[index].tag}",
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                    ),
+                              Opacity(
+                                opacity: 0.4,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black,
                                   ),
-                                  if (filtered[index].translatedName != null &&
-                                      filtered[index].translatedName!.isNotEmpty)
-                                    Text(
-                                      "#${filtered[index].tag}",
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          color: Colors.white, fontSize: 12),
-                                    ),
-                                    if (filtered[index].translatedName != null &&
-                                        filtered[index].translatedName!.isNotEmpty)
+                                ),
+                              ),
+                              Align(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(2.0),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: <Widget>[
                                       Text(
-                                        filtered[index].translatedName!,
+                                        "#${filtered[index].tag}",
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
-                                            color: Colors.white, fontSize: 10),
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                        ),
                                       ),
-                                    ),
-                                ],
+                                      if (filtered[index].translatedName !=
+                                              null &&
+                                          filtered[index]
+                                              .translatedName!
+                                              .isNotEmpty)
+                                        Text(
+                                          filtered[index].translatedName!,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                alignment: Alignment.bottomCenter,
                               ),
-                            ),
-                            alignment: Alignment.bottomCenter,
+                            ],
                           ),
-                        ],
-                      ),
-                    );
-                  }, childCount: filtered.length),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: rowCount)),
-            );}),
+                        ),
+                      );
+                    }, childCount: filtered.length),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: rowCount,
+                    ),
+                  ),
+                );
+              },
+            ),
           SliverToBoxAdapter(
             child: Container(
               height: (MediaQuery.of(context).size.width / 3) - 16,

@@ -30,6 +30,7 @@ import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/star_icon.dart';
 import 'package:pixez/er/illust_cacher.dart';
+import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/i18n.dart';
@@ -138,6 +139,9 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
   late EasyRefreshController _refreshController;
   bool tempView = false;
   final _detailKey = GlobalKey<ScaffoldState>();
+  // 详情页专用协调器：忽略全局暂停（详情大图在暂停期间仍须加载），
+  // 并限制详情页自身大图的并发
+  late final ImageLoadCoordinator _detailCoordinator;
 
   @override
   void initState() {
@@ -147,6 +151,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       controlFinishRefresh: true,
     );
     _scrollController = ScrollController();
+    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
     _illustStore = widget.store ?? IllustStore(widget.id, null);
     _illustStore.fetch();
     _aboutStore = IllustAboutStore(widget.id, _refreshController);
@@ -199,6 +204,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
 
   @override
   void dispose() {
+    _detailCoordinator.dispose();
     _illustStore.dispose();
     _scrollController.dispose();
     _refreshController.dispose();
@@ -270,7 +276,28 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return _buildBody(context);
+    // 详情页打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）
+    // 详情页打开期间冻结列表协调器队列 + 详情页专用协调器
+    //（忽略全局暂停——否则 priorityIndex 注册会被暂停门控拦截导致
+    // 详情大图永不加载；并限制详情大图并发）
+    return DetailModeScope(
+      child: ImageCoordinatorScope(
+        coordinator: _detailCoordinator,
+        child: _buildBody(context),
+      ),
+    );
+  }
+
+  /// 详情大图按显示宽度解码：medium 图保持原始解码以复用列表页
+  /// ImageCache；大图按屏宽 × dpr 限制解码尺寸（上限 2048），
+  /// 否则 50P 级多图漫画全尺寸解码可达 GB 级位图内存（OOM 风险）
+  int? _displayCacheWidth(BuildContext context, String url, String mediumUrl) {
+    if (url == mediumUrl) return null;
+    return (MediaQuery.of(context).size.width *
+            MediaQuery.of(context).devicePixelRatio)
+        .round()
+        .clamp(1, 2048)
+        .toInt();
   }
 
   Widget _buildBody(BuildContext context) {
@@ -596,7 +623,16 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                       tag: widget.heroString,
                       child: PixivImage(
                         url,
+                        // 注册到详情页专用协调器：限制详情大图并发
+                        priorityIndex: 0,
                         width: MediaQuery.of(context).size.width,
+                        // 按显示宽度解码：单图分支此前遗漏 memCacheWidth，
+                        // 5000×7000 原图全尺寸解码可达 140MB 位图内存
+                        memCacheWidth: _displayCacheWidth(
+                          context,
+                          url,
+                          data.imageUrls.medium,
+                        ),
                         cacheHeaderData: PixEzCacheHeaderData(
                           key: '${data.id}_0',
                           quality: IllustQualityExtension.fromValue(
@@ -675,6 +711,8 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
         return NullHero(
           child: PixivImage(
             url,
+            // 注册到详情页专用协调器：限制详情大图并发
+            priorityIndex: index,
             placeWidget: PixivImage(
               illust.metaPages[index].imageUrls!.medium,
               width: MediaQuery.of(context).size.width,
@@ -686,15 +724,27 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
               ),
             ),
             width: MediaQuery.of(context).size.width,
+            memCacheWidth: _displayCacheWidth(
+              context,
+              url,
+              illust.metaPages[index].imageUrls!.medium,
+            ),
           ),
           tag: widget.heroString,
         );
       return PixivImage(
         url,
+        // 注册到详情页专用协调器：限制详情大图并发
+        priorityIndex: index,
         width: MediaQuery.of(context).size.width,
         cacheHeaderData: PixEzCacheHeaderData(
           key: '${illust.id}_${index}',
           quality: IllustQualityExtension.fromValue(userSetting.mangaQuality),
+        ),
+        memCacheWidth: _displayCacheWidth(
+          context,
+          url,
+          illust.metaPages[index].imageUrls!.medium,
         ),
         placeWidget: Container(
           height: height,
@@ -712,6 +762,8 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
               ? NullHero(
                   child: PixivImage(
                     illust.illustDetailImageUrl(index),
+                    // 注册到详情页专用协调器：限制详情大图并发
+                    priorityIndex: index,
                     placeWidget: PixivImage(
                       illust.metaPages[index].imageUrls!.medium,
                     ),
@@ -720,6 +772,11 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                       quality: IllustQualityExtension.fromValue(
                         userSetting.pictureQuality,
                       ),
+                    ),
+                    memCacheWidth: _displayCacheWidth(
+                      context,
+                      illust.illustDetailImageUrl(index),
+                      illust.metaPages[index].imageUrls!.medium,
                     ),
                   ),
                   tag: widget.heroString,
@@ -736,14 +793,23 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                 ))
         : PixivImage(
             illust.illustDetailImageUrl(index),
+            // 注册到详情页专用协调器：限制详情大图并发
+            priorityIndex: index,
             cacheHeaderData: PixEzCacheHeaderData(
               key: '${illust.id}_${index}',
               quality: IllustQualityExtension.fromValue(
                 userSetting.pictureQuality,
               ),
             ),
+            memCacheWidth: _displayCacheWidth(
+              context,
+              illust.illustDetailImageUrl(index),
+              illust.metaPages[index].imageUrls!.medium,
+            ),
             placeWidget: Container(
-              height: 150,
+              // 用传入的布局高度替代写死的 150：
+              // 出图时高度一致，避免占位→真图切换的剧烈跳动
+              height: height,
               child: Center(
                 child: Text(
                   '$index',

@@ -200,7 +200,6 @@ class _PixivImageState extends State<PixivImage> {
   int _retryCount = 0;
   String? _lastKey;
   Uint8List? _cachedBytes; // 方案 B: 从本地缓存回退的图片字节
-  bool _fromCache = false;
   // CachedNetworkImage 已渲染出图（当前 url）后，禁止 _cachedBytes 再覆盖：
   // 慢磁盘下缓存字节晚于图片显示完成，切换会出现"图变白再淡入"的闪烁
   bool _imageShown = false;
@@ -246,15 +245,18 @@ class _PixivImageState extends State<PixivImage> {
   @override
   void didUpdateWidget(covariant PixivImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // memCacheWidth 可能因窗口缩放/屏幕旋转/条目复用而变化：
+    // 无条件同步（与 url 无关），避免 State 字段落后导致解码宽度错误
+    if (oldWidget.memCacheWidth != widget.memCacheWidth) {
+      setState(() => memCacheWidth = widget.memCacheWidth);
+    }
     if (oldWidget.url != widget.url) {
       // 取消旧 URL 的协调器注册
       if (oldWidget.url.isNotEmpty) {
         _coordinator.cancel(oldWidget.url);
       }
       _retryCount = 0;
-      _cachedBytes = null;
-      _fromCache = false;
-      _imageShown = false;
+      _cachedBytes = null;      _imageShown = false;
       _slotReleased = false;
       _slotTimeoutCount = 0;
       setState(() {
@@ -299,9 +301,7 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes == null &&
             !_imageShown) {
           setState(() {
-            _cachedBytes = Uint8List.fromList(bytes);
-            _fromCache = true;
-          });
+            _cachedBytes = Uint8List.fromList(bytes);          });
         }
       }
     } catch (_) {
@@ -331,21 +331,24 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes == null &&
             !_imageShown) {
           setState(() {
-            _cachedBytes = bytes;
-            _fromCache = true;
-          });
+            _cachedBytes = bytes;          });
           return;
         }
       }
       // 2) 缓存未命中，直接用 Dio 下载（绕过 CachedNetworkImage 管线）
-      await _directDownload(resolvedUrl);
+      await _directDownload(resolvedUrl, checkUrl: sourceUrl);
     } catch (e) {
       print('_tryLoadFallback error: $e');
     }
   }
 
   /// 直接用 Dio 下载图片字节，绕过 CacheManager/CachedNetworkImage 管线
-  Future<void> _directDownload(String downloadUrl) async {
+  ///
+  /// [checkUrl] 为发起下载时的原始 URL（非 resolvedUrl），用于代际校验：
+  /// 下载期间列表快速滑动复用卡片（url 已变化）时，禁止把上一张卡的
+  /// 字节填入当前 State，否则会显示错误图片
+  Future<void> _directDownload(String downloadUrl,
+      {required String checkUrl}) async {
     try {
       final dio = await _getImageDio();
       final resp = await dio.get<List<int>>(
@@ -356,11 +359,12 @@ class _PixivImageState extends State<PixivImage> {
           receiveTimeout: const Duration(seconds: 30),
         ),
       );
-      if (resp.data != null && resp.data!.isNotEmpty && mounted) {
+      if (resp.data != null &&
+          resp.data!.isNotEmpty &&
+          mounted &&
+          url == checkUrl) {
         setState(() {
-          _cachedBytes = Uint8List.fromList(resp.data!);
-          _fromCache = false;
-        });
+          _cachedBytes = Uint8List.fromList(resp.data!);        });
       }
     } catch (e) {
       print('_directDownload error: $e');
@@ -410,6 +414,14 @@ class _PixivImageState extends State<PixivImage> {
   /// 网络故障时由 errorWidget/手动重试接管，避免无限"排队→超时→重排"循环。
   void _onSlotTimeout() {
     if (!mounted) return;
+    // 图片已通过本地缓存（_cachedBytes）显示：无需网络槽位。
+    // 仅释放占用的槽位，不清除缓存字节——否则已显示的图会突然
+    // 消失并重新排队加载（且此分支不构建 CachedNetworkImage，
+    // 没有其他 release 来源，槽位只能靠超时释放）
+    if (_cachedBytes != null) {
+      _releaseSlot();
+      return;
+    }
     _coordinator.release(widget.url);
     _slotReleased = true;
     _slotTimer = null;
@@ -452,9 +464,7 @@ class _PixivImageState extends State<PixivImage> {
           //（Image.memory 直接显示，完全绕过 CachedNetworkImage 管线）
           _coordinator.cancel(targetUrl);
           setState(() {
-            _cachedBytes = Uint8List.fromList(bytes);
-            _fromCache = true;
-          });
+            _cachedBytes = Uint8List.fromList(bytes);          });
         }
       }
     } catch (_) {
@@ -484,6 +494,8 @@ class _PixivImageState extends State<PixivImage> {
   void _scheduleRetry() {
     if (_retryCount >= 3) return;
     _retryCount++;
+    // 网络重试期间图片未在显示：复位，使重试后缓存回退/直下可用
+    _imageShown = false;
     final delay = Duration(seconds: 2 << (_retryCount - 1));
     final currentKey = url;
     _lastKey = currentKey;
@@ -513,6 +525,9 @@ class _PixivImageState extends State<PixivImage> {
               fit: fit ?? BoxFit.fitWidth,
               width: width,
               height: height,
+              // 按显示宽度解码：否则原始大图（如 5000×7000）全尺寸解码，
+              // 单帧可达上百 MB，且以全尺寸条目挤占 ImageCache
+              cacheWidth: memCacheWidth,
               gaplessPlayback: true,
               frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
                 if (wasSynchronouslyLoaded || !fade) return child;
@@ -523,18 +538,6 @@ class _PixivImageState extends State<PixivImage> {
                   child: child,
                 );
               },
-            ),
-            // 缓存标记
-            Positioned(
-              bottom: 2, right: 2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text('缓存', style: TextStyle(color: Colors.white, fontSize: 9)),
-              ),
             ),
           ],
         ),
@@ -547,6 +550,10 @@ class _PixivImageState extends State<PixivImage> {
     }
 
     final size = min(min(width ?? 60, height ?? 60), 60.0);
+    // 槽位使命在"请求发出"即完成：构建 CachedNetworkImage（触发 resolve/
+    // 下载）前释放槽位，让队列推进——大图下载+解码全程占槽会阻塞
+    // 第 7+ 张排队（协调器只应限制请求发起并发，而非下载时长）
+    _releaseSlot();
     return CachedNetworkImage(
       key: ValueKey('$_retryCount'),
       useOldImageOnUrlChange: true,
@@ -583,6 +590,10 @@ class _PixivImageState extends State<PixivImage> {
       },
       errorWidget: (context, url, error) {
         _releaseSlot();
+        // 进入错误 UI = 图片已不在显示，_imageShown 失效：复位以恢复
+        // 缓存回退能力（否则曾成功显示的 url 重试失败后，本地磁盘缓存
+        // 回退被 _imageShown 守卫永久阻断，直到 url 再次变化）
+        _imageShown = false;
         _scheduleRetry();
         _tryLoadFallback(url); // 方案 B: 网络失败→缓存→直接下载
         final fileName = Uri.tryParse(url)?.pathSegments.isNotEmpty == true
@@ -606,6 +617,7 @@ class _PixivImageState extends State<PixivImage> {
                   onPressed: () {
                     _retryCount = 0;
                     _cachedBytes = null; // 重置缓存，强制重试网络
+                    _imageShown = false; // 复位显示状态，恢复缓存回退能力
                     setState(() {});
                   },
                   child: Text(":("),
@@ -638,12 +650,18 @@ class _PixivImageState extends State<PixivImage> {
 }
 
 class PixivProvider {
-  static ImageProvider url(String url, {String? preUrl}) {
-    return CachedNetworkImageProvider(
+  /// [width] 非空时按宽度限制解码尺寸（ResizeImage 包装，ImageCache key
+  /// 含宽度维度）：大图查看器（PhotoZoomPage）传屏宽 × dpr × 2（上限
+  /// 4096），避免 5000×7000 原图全尺寸解码 140MB 位图的内存尖峰与
+  /// ImageCache 驱逐；不传则按原始尺寸解码
+  static ImageProvider url(String url, {String? preUrl, int? width}) {
+    final provider = CachedNetworkImageProvider(
       url,
       headers: Hoster.header(url: preUrl),
       cacheManager: pixivCacheManager,
     );
+    if (width == null || width <= 0) return provider;
+    return ResizeImage(provider, width: width);
   }
 }
 

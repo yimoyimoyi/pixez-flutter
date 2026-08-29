@@ -72,6 +72,13 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
 
   int lastRefreshTime = 0;
 
+  // 刷新失败退避：失败后冷却期内不重复刷新，避免刷新风暴
+  static int _lastRefreshFailMs = 0;
+  static const int _refreshCooldownMs = 60000;
+
+  // 400 无效重试计数 key（与连接层重试 _retryCountKey 分离）
+  static const _refreshRetryCountKey = 'refresh_token_400_retry_count';
+
   // 重试计数改为 per-request（存入 options.extra），避免跨请求共享计数错乱
   static const _retryCountKey = 'refresh_token_retry_count';
 
@@ -86,11 +93,18 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
       if (_refreshCompleter != null) {
         // 已有处于刷新流程中的请求，等待其完成
         try {
-          await _refreshCompleter!.future;
+          // 超时兜底：刷新请求挂起时，等待者不至于永久 pending
+          await _refreshCompleter!.future
+              .timeout(const Duration(seconds: 30));
         } catch (_) {}
       } else {
         DateTime dateTime = DateTime.now();
-        if ((dateTime.millisecondsSinceEpoch - lastRefreshTime) > 200000) {
+        final nowMs = dateTime.millisecondsSinceEpoch;
+        // 刷新失败退避：冷却期内不重刷，避免刷新风暴
+        final inFailCooldown = _lastRefreshFailMs != 0 &&
+            (nowMs - _lastRefreshFailMs) < _refreshCooldownMs;
+        // 成功刷新后 200s 冷却为既有逻辑；失败冷却在此基础上叠加
+        if (!inFailCooldown && (nowMs - lastRefreshTime) > 200000) {
           _refreshCompleter = Completer<void>();
           try {
             print("lock start ========================");
@@ -120,11 +134,13 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
                   xRestrict: user.xRestrict,
                   isMailAuthorized: bti(user.isMailAuthorized),
                   id: accountPersist.id));
-              lastRefreshTime = DateTime.now().millisecondsSinceEpoch;
+              lastRefreshTime = nowMs;
+              _lastRefreshFailMs = 0;
               print("unlock ========================");
               _refreshCompleter?.complete();
             } else {
-              lastRefreshTime = 0;
+              // 非 OAuth 错误（或未登录）：进入失败退避，不立即重刷
+              _lastRefreshFailMs = nowMs;
               print("unlock ========================");
               _refreshCompleter?.complete();
               _refreshCompleter = null;
@@ -132,7 +148,8 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
             }
           } catch (e) {
             print(e);
-            lastRefreshTime = 0;
+            // 刷新请求本身异常：进入失败退避
+            _lastRefreshFailMs = nowMs;
             print("unlock ========================");
             _refreshCompleter?.completeError(e);
             _refreshCompleter = null;
@@ -142,6 +159,14 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
           }
         }
       }
+      // 400 无效重试上限：刷新失败/冷却期内旧 token 重试必再 400，
+      // 上限 2 次后 reject，避免无限 400 重试循环
+      final refreshRetryNum =
+          err.requestOptions.extra[_refreshRetryCountKey] as int? ?? 0;
+      if (refreshRetryNum >= 2) {
+        return handler.reject(err);
+      }
+      err.requestOptions.extra[_refreshRetryCountKey] = refreshRetryNum + 1;
       var option = err.requestOptions;
       final newToken = (await getToken());
       print("unlock retry ======================== $newToken");
