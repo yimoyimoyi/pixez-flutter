@@ -16,6 +16,7 @@
 import 'dart:async';
 import 'package:clock/clock.dart';
 import 'package:flutter/widgets.dart';
+import 'package:pixez/main.dart';
 
 class _LoadEntry implements Comparable<_LoadEntry> {
   final String url;
@@ -419,7 +420,9 @@ class DetailModeScope extends StatefulWidget {
   State<DetailModeScope> createState() => _DetailModeScopeState();
 }
 
-class _DetailModeScopeState extends State<DetailModeScope> {
+class _DetailModeScopeState extends State<DetailModeScope> with RouteAware {
+  bool _subscribed = false;
+
   @override
   void initState() {
     super.initState();
@@ -427,8 +430,40 @@ class _DetailModeScopeState extends State<DetailModeScope> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 注册路由观察：详情页被覆盖/恢复可见时同步全局暂停状态。
+    // 原实现仅靠 dispose 配对，详情页被其他路由覆盖（如点击 tag 跳转
+    // 搜索页）时 dispose 不执行 → 全局暂停永久泄漏 → 新页面图片排队
+    // 永不加载（有列表但无图）
+    if (!_subscribed) {
+      final route = ModalRoute.of(context);
+      if (route != null) {
+        routeObserver.subscribe(this, route);
+        _subscribed = true;
+      }
+    }
+  }
+
+  @override
+  void didPushNext() {
+    // 详情页被其他路由覆盖（tag→搜索页、用户主页等）：详情页不可见，
+    // 解除全局暂停——新页面图片立即加载（无需等待 5s 排队超时兜底）
+    ImageLoadCoordinator.exitDetailMode();
+  }
+
+  @override
+  void didPopNext() {
+    // 详情页恢复可见（从覆盖页返回）：重新独占连接池（详情大图优先）
+    ImageLoadCoordinator.enterDetailMode();
+  }
+
+  @override
   void dispose() {
     ImageLoadCoordinator.exitDetailMode();
+    if (_subscribed) {
+      routeObserver.unsubscribe(this);
+    }
     super.dispose();
   }
 
