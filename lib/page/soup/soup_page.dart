@@ -21,6 +21,7 @@ import 'package:pixez/main.dart';
 import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
+import 'package:pixez/models/am_article_card.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:pixez/models/spotlight_response.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
@@ -161,8 +162,9 @@ class _SoupPageState extends State<SoupPage> {
       return Center(child: CircularProgressIndicator());
     }
 
-    // 加载完成但无内容：显示错误
-    if (_soupStore.amWorks.isEmpty) {
+    // 加载完成但无内容：显示错误或专栏提示
+    if (_soupStore.amWorks.isEmpty && _soupStore.amArticles.isEmpty) {
+      final isText = _soupStore.isTextArticle;
       return Center(
         child: Padding(
           padding: EdgeInsets.all(32),
@@ -184,14 +186,30 @@ class _SoupPageState extends State<SoupPage> {
                     textAlign: TextAlign.center),
                 SizedBox(height: 16),
               ],
-              Icon(Icons.cloud_off, size: 48, color: Colors.grey),
+              Icon(
+                isText ? Icons.article_outlined : Icons.cloud_off,
+                size: 48,
+                color: Colors.grey,
+              ),
               SizedBox(height: 12),
-              Text('正文加载失败',
-                  style: TextStyle(color: Colors.grey)),
+              Text(
+                isText ? '文字专栏特辑' : '正文加载失败',
+                style: TextStyle(color: Colors.grey),
+              ),
               SizedBox(height: 4),
-              Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                  textAlign: TextAlign.center),
+              Text(
+                _soupStore.errorMessage ?? '请检查网络连接后重试',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              if (isText) ...[
+                SizedBox(height: 16),
+                OutlinedButton.icon(
+                  icon: Icon(Icons.open_in_browser, size: 16),
+                  label: Text('在浏览器中打开'),
+                  onPressed: () => launchUrlString(widget.url),
+                ),
+              ],
               // 调试日志入口仅 debug 模式展示（排查用）
               if (kDebugMode && _soupStore.logText.isNotEmpty) ...[
                 SizedBox(height: 12),
@@ -207,6 +225,76 @@ class _SoupPageState extends State<SoupPage> {
         ),
       );
     }
+
+    // 特辑合集：展示特辑卡片列表
+    if (_soupStore.amArticles.isNotEmpty) {
+      return ListView.builder(
+        itemBuilder: (BuildContext context, int index) {
+          if (index == 0) {
+            if (_soupStore.description == null ||
+                _soupStore.description!.isEmpty) {
+              return Container(height: 1);
+            }
+            return Card(
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Text(_soupStore.description ?? ''),
+              ),
+            );
+          }
+          AmArticleCard card = _soupStore.amArticles[index - 1];
+          return InkWell(
+            onTap: () {
+              Navigator.of(context, rootNavigator: true).push(
+                MaterialPageRoute(
+                  builder: (BuildContext context) => SoupPage(
+                    url: card.articleUrl,
+                    spotlight: SpotlightArticle(
+                      id: int.tryParse(card.id) ?? 0,
+                      title: card.title,
+                      pureTitle: card.title,
+                      thumbnail: card.thumbnail,
+                      articleUrl: card.articleUrl,
+                      publishDate: DateTime.tryParse(
+                              card.date.replaceAll('.', '-')) ??
+                          DateTime.now(),
+                    ),
+                  ),
+                ),
+              );
+            },
+            child: Card(
+              clipBehavior: Clip.antiAlias,
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  if (card.thumbnail.isNotEmpty)
+                    PixivImage(
+                      card.thumbnail,
+                      width: double.infinity,
+                      height: 180,
+                      fit: BoxFit.cover,
+                    ),
+                  ListTile(
+                    title: Text(
+                      card.title,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      '${card.category}${card.date.isNotEmpty ? ' · ${card.date}' : ''}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+        itemCount: _soupStore.amArticles.length + 1,
+      );
+    }
+
     return ListView.builder(
       itemBuilder: (BuildContext context, int index) {
         return Builder(builder: (context) {

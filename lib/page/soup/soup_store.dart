@@ -20,9 +20,11 @@ import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:mobx/mobx.dart';
 import 'package:html/parser.dart' show parse;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/am_article_card.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:rhttp/rhttp.dart' as r;
 import 'package:html/dom.dart';
@@ -36,6 +38,12 @@ abstract class _SoupStoreBase with Store {
   late Dio dio;
 
   ObservableList<AmWork> amWorks = ObservableList();
+  ObservableList<AmArticleCard> amArticles = ObservableList();
+
+  @observable
+  bool isTextArticle = false;
+
+  bool get isCollection => amArticles.isNotEmpty;
 
   @observable
   String? description;
@@ -112,6 +120,8 @@ abstract class _SoupStoreBase with Store {
     if (isLoading) return;
     errorMessage = null;
     amWorks.clear();
+    amArticles.clear();
+    isTextArticle = false;
     description = null;
     isLoading = true;
     _log('fetch start, url=$url');
@@ -130,11 +140,15 @@ abstract class _SoupStoreBase with Store {
       isLoading = false;
     }
 
-    if (amWorks.isEmpty && errorMessage == null) {
-      errorMessage = '未提取到作品（amWorks 为空）';
-      _log('amWorks STILL empty after doFetch');
+    if (amWorks.isEmpty && amArticles.isEmpty && errorMessage == null) {
+      if (isTextArticle) {
+        errorMessage = '本文为文字专栏特辑，不包含插画作品';
+      } else {
+        errorMessage = '未提取到作品（amWorks 与 amArticles 均为空）';
+      }
+      _log('amWorks and amArticles STILL empty after doFetch');
     }
-    _log('fetch done, amWorks=${amWorks.length}, error=$errorMessage');
+    _log('fetch done, amWorks=${amWorks.length}, amArticles=${amArticles.length}, error=$errorMessage');
   }
 
   Future<void> _doFetch(String url) async {
@@ -227,6 +241,44 @@ abstract class _SoupStoreBase with Store {
         _parseMobileWork(work);
       }
     } else if (workElements.isEmpty && workCount == 0) {
+      // 检查是否为特辑合集页面（正文包含多个 _article-card 特辑推荐卡片）
+      final bodyContainer =
+          document.querySelector('article.am__article-body-container') ??
+              document.querySelector('.am__body') ??
+              document.querySelector('._feature-article-body') ??
+              document.body;
+
+      final cards = bodyContainer?.querySelectorAll('._article-card') ?? [];
+      _log('collection article cards found: ${cards.length}');
+
+      if (cards.isNotEmpty) {
+        for (var card in cards) {
+          _parseArticleCard(card);
+        }
+      }
+
+      if (amArticles.isNotEmpty) {
+        _log('parsed ${amArticles.length} collection articles (text articles filtered)');
+        return;
+      }
+
+      // 如果卡片全被过滤掉，或者根本没有卡片，检查是否是文字专栏特辑
+      final pageCategory =
+          document.querySelector('.am__categoty-pr')?.text.trim() ?? '';
+      final pageHeading =
+          document.querySelector('h1.am__title')?.text.trim() ?? '';
+      if (_isTextCategory(pageCategory) ||
+          url.contains('/c/column') ||
+          url.contains('/c/news') ||
+          pageHeading.contains('的咨询') ||
+          pageHeading.contains('の相談') ||
+          (cards.isNotEmpty && amArticles.isEmpty)) {
+        isTextArticle = true;
+        errorMessage = '本文为文字专栏特辑，不包含插画作品';
+        _log('detected text-only column article');
+        return;
+      }
+
       final articles = document.getElementsByTagName('article');
       _log('articles found: ${articles.length}');
       if (articles.isNotEmpty) {
@@ -349,4 +401,91 @@ abstract class _SoupStoreBase with Store {
       _log('added work "${amWork.title}" by ${amWork.user}');
     }
   }
+
+  /// 判断是否为文字类特辑分类（专栏、新闻、小说等）
+  bool _isTextCategory(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('column') ||
+        lower.contains('专栏') ||
+        lower.contains('コラム') ||
+        lower.contains('news') ||
+        lower.contains('新闻') ||
+        lower.contains('ニュース') ||
+        lower.contains('novel') ||
+        lower.contains('小说') ||
+        lower.contains('小説') ||
+        lower.contains('inspiration');
+  }
+
+  /// 解析特辑合集中的 ._article-card 元素，直接过滤掉文字特辑
+  void _parseArticleCard(Element card) {
+    final cardClasses = card.attributes['class'] ?? '';
+
+    // 1. 分类信息
+    final catEl = card.querySelector('.arc__thumbnail-label') ??
+        card.querySelector('a[href*="/c/"]');
+    final catName = catEl?.text.trim() ?? '';
+    final catHref = catEl?.attributes['href'] ?? '';
+
+    // 2. 标题和链接
+    final titleEl = card.querySelector('.arc__title a');
+    final title = titleEl?.text.trim() ?? '';
+    var href = titleEl?.attributes['href'] ?? '';
+    if (href.isEmpty) {
+      final aEl = card.querySelector('a[href*="/a/"]');
+      href = aEl?.attributes['href'] ?? '';
+    }
+    if (href.isEmpty) return;
+
+    // 过滤文字特辑：专栏、新闻、小说、灵感等
+    if (_isTextCategory(cardClasses) ||
+        _isTextCategory(catName) ||
+        _isTextCategory(catHref) ||
+        title.contains('的咨询') ||
+        title.contains('の相談')) {
+      _log('filtered text article card: "$title" [$catName]');
+      return;
+    }
+
+    final fullUrl =
+        href.startsWith('http') ? href : 'https://www.pixivision.net$href';
+    final idMatch = RegExp(r'/a/(\d+)').firstMatch(href);
+    final id = idMatch?.group(1) ?? '';
+
+    // 3. 封面缩略图
+    String thumbnail = '';
+    final thumbDiv = card.querySelector('._thumbnail');
+    final style = thumbDiv?.attributes['style'] ?? '';
+    final urlMatch = RegExp(r'url\((.*?)\)').firstMatch(style);
+    if (urlMatch != null) {
+      thumbnail =
+          urlMatch.group(1)!.replaceAll("'", '').replaceAll('"', '').trim();
+    }
+    if (thumbnail.isEmpty) {
+      final img = card.querySelector('img');
+      thumbnail = img?.attributes['src'] ?? '';
+    }
+
+    // 4. 日期
+    final dateEl =
+        card.querySelector('time._date') ?? card.querySelector('time');
+    final date = dateEl?.text.trim() ?? '';
+
+    amArticles.add(AmArticleCard(
+      id: id,
+      title: title,
+      articleUrl: fullUrl,
+      thumbnail: thumbnail,
+      category: catName.isNotEmpty ? catName : '插画',
+      date: date,
+    ));
+    _log('added collection article card: "$title"');
+  }
+
+  @visibleForTesting
+  bool testIsTextCategory(String text) => _isTextCategory(text);
+
+  @visibleForTesting
+  void testParseArticleCard(Element card) => _parseArticleCard(card);
 }
+
