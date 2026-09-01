@@ -38,11 +38,17 @@ abstract class IllustItemsPage extends StatefulWidget {
   final String? heroString;
   final IllustStore? store;
 
+  /// 图片查看器（PictureListPage）内的页：浏览历史由查看器在用户
+  /// 实际浏览到（翻页完成）时统一写入，避免 PageView 预构建的
+  /// 相邻页（用户未滑到）误入历史
+  final bool deferHistory;
+
   const IllustItemsPage({
     Key? key,
     required this.id,
     this.heroString,
     this.store,
+    this.deferHistory = false,
   }) : super(key: key);
 }
 
@@ -69,7 +75,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
 
     _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
     illustStore = widget.store ?? IllustStore(widget.id, null);
-    illustStore.fetch();
+    illustStore.fetch(recordHistory: !widget.deferHistory);
     aboutStore = IllustAboutStore(widget.id, refreshController);
 
     initializeScrollController(scrollController, aboutStore.next);
@@ -81,7 +87,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
       illustStore = widget.store ?? IllustStore(widget.id, null);
-      illustStore.fetch();
+      illustStore.fetch(recordHistory: !widget.deferHistory);
       aboutStore = IllustAboutStore(widget.id, refreshController);
       LPrinter.d("state change");
     }
@@ -364,7 +370,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
           Text('${illustStore.errorMessage}', maxLines: 5),
           FilledButton(
             onPressed: () {
-              illustStore.fetch();
+              illustStore.fetch(recordHistory: !widget.deferHistory);
             },
             child: Text(I18n.of(context).refresh),
           ),

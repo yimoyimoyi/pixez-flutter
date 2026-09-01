@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/lighting/lighting_store.dart';
+import 'package:pixez/page/history/history_store.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
 import 'package:pixez/utils/swipe_evaluator.dart';
@@ -59,7 +60,22 @@ class _PictureListPageState extends State<PictureListPage> {
     _lightingStore = widget.lightingStore;
     nowPosition = _iStores.indexOf(_store);
     _pageController = PageController(initialPage: nowPosition);
+    // 用户点开的初始页即计入浏览历史（预构建的相邻页不记录）
+    _recordCurrentHistory();
     super.initState();
+  }
+
+  /// 记录当前页作品到浏览历史：查看器内仅"用户实际浏览到的页"
+  ///（初始页 + 翻页完成）记录；PageView 预构建的相邻页由
+  /// IllustLightingPage(deferHistory) 跳过，避免未滑到的作品误入历史
+  void _recordCurrentHistory() {
+    if (_iStores.isEmpty || nowPosition >= _iStores.length) return;
+    final current = _iStores[nowPosition];
+    if (current.illusts != null) {
+      try {
+        History.insertIllust(current.illusts!);
+      } catch (_) {}
+    }
   }
 
   @override
@@ -184,6 +200,8 @@ class _PictureListPageState extends State<PictureListPage> {
       // 旧手势的动画回调不更新状态（新手势已开始）
       if (mounted && token == _gestureToken) {
         setState(() => nowPosition = target);
+        // 翻页完成：用户实际浏览到新页，计入浏览历史
+        _recordCurrentHistory();
       }
     });
   }
@@ -221,6 +239,8 @@ class _PictureListPageState extends State<PictureListPage> {
                 id: f.id,
                 heroString: tag,
                 store: f,
+                // 预构建相邻页不记录历史：由查看器翻页完成时统一记录
+                deferHistory: true,
               );
             },
             itemCount: _iStores.length + 1,

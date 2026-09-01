@@ -61,12 +61,18 @@ class IllustLightingPage extends StatefulWidget {
   final IllustStore? store;
   final GestureDragEndCallback? onHorizontalDragEnd;
 
+  /// 图片查看器（PictureListPage）内的页：浏览历史由查看器在用户
+  /// 实际浏览到（翻页完成）时统一写入，避免 PageView 预构建的
+  /// 相邻页（用户未滑到）误入历史
+  final bool deferHistory;
+
   const IllustLightingPage({
     Key? key,
     required this.id,
     this.heroString,
     this.store,
     this.onHorizontalDragEnd,
+    this.deferHistory = false,
   }) : super(key: key);
 
   @override
@@ -99,6 +105,7 @@ class _IllustLightingPageState extends State<IllustLightingPage> {
       store: widget.store,
       heroString: widget.heroString,
       onHorizontalDragEnd: widget.onHorizontalDragEnd,
+      deferHistory: widget.deferHistory,
     );
   }
 
@@ -118,12 +125,16 @@ class IllustVerticalPage extends StatefulWidget {
   final IllustStore? store;
   final GestureDragEndCallback? onHorizontalDragEnd;
 
+  /// 图片查看器内的页：浏览历史由查看器在翻页完成时统一记录
+  final bool deferHistory;
+
   const IllustVerticalPage({
     Key? key,
     required this.id,
     this.heroString,
     this.store,
     this.onHorizontalDragEnd,
+    this.deferHistory = false,
   }) : super(key: key);
 
   @override
@@ -153,7 +164,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
     _scrollController = ScrollController();
     _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
     _illustStore = widget.store ?? IllustStore(widget.id, null);
-    _illustStore.fetch();
+    _illustStore.fetch(recordHistory: !widget.deferHistory);
     _aboutStore = IllustAboutStore(widget.id, _refreshController);
     super.initState();
     supportTranslateCheck();
@@ -164,7 +175,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
       _illustStore = widget.store ?? IllustStore(widget.id, null);
-      _illustStore.fetch();
+      _illustStore.fetch(recordHistory: !widget.deferHistory);
       _aboutStore = IllustAboutStore(widget.id, _refreshController);
       LPrinter.d("state change");
     }

@@ -546,15 +546,27 @@ fn map_execute_error(e: reqwest::Error) -> RhttpError {
     }
 }
 
-/// T3：检测 ECH 握手被服务器拒绝（内置/缓存 config 已轮换或过期，
-/// rustls 返回 ServerRejectedEncryptedClientHello）——需要强制刷新
-/// config 后自动重试
-fn is_ech_rejected(err: &RhttpError) -> bool {
-    matches!(
-        err,
+/// T3：检测 ECH 握手被服务器拒绝（内置/缓存 config 已轮换或过期）——
+/// 需要强制刷新 config 后自动重试。两种表现：
+/// 1. rustls 直接返回 ServerRejectedEncryptedClientHello
+/// 2. rustls 降级走 outer SNI（cloudflare-ech.com）握手后，用 inner SNI
+///   （pixiv 域名）验证证书 → InvalidCertificate(NotValidForNameContext)，
+///   错误串含 outer 证书名 cloudflare-ech.com —— 这是"config 过期"的
+///   确凿特征（require_ech 模式下真证书错误罕见，重试一次可接受）
+pub(crate) fn is_ech_rejected(err: &RhttpError) -> bool {
+    match err {
         RhttpError::RhttpConnectionError(msg) | RhttpError::RhttpUnknownError(msg)
-            if msg.contains("ServerRejectedEncryptedClientHello")
-    )
+            if msg.contains("ServerRejectedEncryptedClientHello") =>
+        {
+            true
+        }
+        RhttpError::RhttpInvalidCertificateError(msg)
+            if msg.contains("NotValidForNameContext") && msg.contains("cloudflare-ech.com") =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 /// T3：判断 ECH 自动重试的可行性——仅限安全方法且请求体可重建：
@@ -631,6 +643,15 @@ mod tests {
         )));
         assert!(is_ech_rejected(&RhttpError::RhttpUnknownError(
             "ServerRejectedEncryptedClientHello".to_string()
+        )));
+        // 实际观测到的降级形态：outer SNI（cloudflare-ech.com）证书与
+        // inner SNI（app-api.pixiv.net）不匹配 → InvalidCertificate
+        assert!(is_ech_rejected(&RhttpError::RhttpInvalidCertificateError(
+            "InvalidCertificate(NotValidForNameContext { expected: DnsName(\"app-api.pixiv.net\"), presented: [DnsName(\"cloudflare-ech.com\"), DnsName(\"*.cloudflare-ech.com\")] })".to_string()
+        )));
+        // 普通证书错误（无 cloudflare-ech.com 特征）不触发重试
+        assert!(!is_ech_rejected(&RhttpError::RhttpInvalidCertificateError(
+            "InvalidCertificate(UnknownIssuer)".to_string()
         )));
         assert!(!is_ech_rejected(&RhttpError::RhttpConnectionError(
             "connection reset by peer".to_string()

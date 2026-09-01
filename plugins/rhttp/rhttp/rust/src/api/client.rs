@@ -14,7 +14,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, EchConfigListBytes, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -181,6 +181,7 @@ struct EchClientCacheEntry {
     ech_config: Vec<u8>,
 }
 
+#[derive(Debug)]
 struct EchLookupResult {
     ech_config: Option<Vec<u8>>,
     ttl: StdDuration,
@@ -822,10 +823,17 @@ struct CacheState {
     /// 在途 DoH 查询的通知（Single-Flight：同一时刻全局只有一个查询在跑，
     /// 查询任务完成时写回缓存并通知所有等待者；等待者被唤醒后重新读缓存）
     in_flight: Option<Arc<Notify>>,
-    /// 内置 config 是否已被使用（进程内仅冷启动首次兜底用一次，
-    /// 使用后立即后台 DoH 刷新；避免失效后反复命中失败路径）
-    builtin_used: bool,
+    /// 内置 config 兜底已使用的域名（F6：每域名冷启动只兜底一次，
+    /// api/oauth/account 各域名互不挤占兜底窗口）
+    builtin_used_hosts: HashSet<String>,
+    /// 最近一次 DoH 查询失败与时间（F1：短窗口快速失败，避免 DoH
+    /// 故障时查询循环永不返回（无限加载）；窗口过期后允许重试自愈）
+    last_error: Option<(Instant, RhttpError)>,
 }
+
+/// F2：DoH 失败后的快速失败窗口——窗口内直接返回错误不重试；
+/// 窗口过后清除 last_error 并允许重新发起 DoH 查询（网络恢复后自愈）
+const DOH_ERROR_RETRY_WINDOW: StdDuration = StdDuration::from_secs(3);
 
 #[derive(Clone)]
 struct EchTransport {
@@ -859,9 +867,10 @@ impl EchTransport {
             // avoids depending on the Android JNI platform-verifier init, which
             // is why the bootstrap query failed on Android but not iOS.
             .tls_certs_only(webpki_root_certs()?)
-            // T2：DoH 查询加超时——避免 223.5.5.5 无响应时请求无限挂起
-            .connect_timeout(StdDuration::from_secs(5))
-            .timeout(StdDuration::from_secs(10))
+            // T2：DoH 查询加超时——避免 223.5.5.5 无响应时请求无限挂起；
+            // F5：失败时整体等待收敛到 ~6s（快速失败 + 3s 窗口内不重试）
+            .connect_timeout(StdDuration::from_secs(3))
+            .timeout(StdDuration::from_secs(6))
             .build()
             .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
 
@@ -885,18 +894,28 @@ impl EchTransport {
         }
     }
 
-    async fn lookup_ech_config(&self, _host: &str) -> Result<EchLookupResult, RhttpError> {
+    async fn lookup_ech_config(&self, host: &str) -> Result<EchLookupResult, RhttpError> {
         // pixiv's ECH front is served via cloudflare-ech.com; resolve the ECH
         // config from that bootstrap host regardless of the requested host.
         // 等待在途查询的兜底超时：查询任务异常挂起/panic 时（例如运行时
         // 内部错误）等待者最坏等 15s 后自行重新发起查询，避免永久挂起
-        //（DoH 请求自身有 10s 总超时，正常路径不会触发该兜底）
+        //（DoH 请求自身有 6s 总超时，正常路径不会触发该兜底）
         const WAIT_TIMEOUT: StdDuration = StdDuration::from_secs(15);
 
         loop {
             let notify = {
                 let mut guard = self.cache.lock().await;
                 let now = Instant::now();
+
+                // F1/F2：DoH 查询失败的快速失败窗口——窗口内直接返回错误
+                // 不重试（消除"请求永不返回"的无限加载）；窗口过后清除
+                // last_error 并重新发起查询（网络恢复后自愈）
+                if let Some((at, err)) = guard.last_error.as_ref() {
+                    if now.saturating_duration_since(*at) < DOH_ERROR_RETRY_WINDOW {
+                        return Err(err.clone());
+                    }
+                    guard.last_error = None;
+                }
 
                 // 1. 有效缓存命中（entry 可能来自 DoH 或内置 config 的后台刷新）
                 if let Some(entry) = guard.entry.as_ref() {
@@ -913,11 +932,12 @@ impl EchTransport {
                 if let Some(notify) = guard.in_flight.as_ref() {
                     Some(notify.clone())
                 } else {
-                    // 3. T3：进程内首次查询直接用内置 config 立即建连
-                    //（零 DoH 往返延迟），同时后台异步 DoH 刷新缓存
-                    if !guard.builtin_used {
+                    // 3. T3 + F6：每个域名首次查询直接用内置 config 立即建连
+                    //（零 DoH 往返延迟），同时后台异步 DoH 刷新缓存。
+                    // 兜底按域名记一次（api/oauth/account 互不挤占）
+                    if !guard.builtin_used_hosts.contains(host) {
                         if let Some(builtin) = self.builtin_config.clone() {
-                            guard.builtin_used = true;
+                            guard.builtin_used_hosts.insert(host.to_string());
                             let notify = Arc::new(Notify::new());
                             spawn_ech_lookup(self.clone(), notify.clone());
                             guard.in_flight = Some(notify);
@@ -965,6 +985,8 @@ impl EchTransport {
         let mut guard = self.cache.lock().await;
         guard.entry = None;
         guard.in_flight = None;
+        // F4：清除失败标记——验证失败的自动重试必须能立即强制重新 DoH
+        guard.last_error = None;
     }
 
     /// 查询任务完成后的写回：若 in_flight 仍指向本任务的通知则清除
@@ -984,15 +1006,24 @@ impl EchTransport {
             return;
         }
         guard.in_flight = None;
-        if let Ok(lookup) = &result {
-            if let Some(config) = lookup.ech_config.as_ref() {
-                guard.entry = Some(Arc::new(ConfigCacheEntry {
-                    ech_config: Arc::new(config.clone()),
-                    expires_at: Instant::now() + lookup.ttl,
-                }));
+        match result {
+            Ok(lookup) => {
+                if let Some(config) = lookup.ech_config.as_ref() {
+                    guard.entry = Some(Arc::new(ConfigCacheEntry {
+                        ech_config: Arc::new(config.clone()),
+                        expires_at: Instant::now() + lookup.ttl,
+                    }));
+                }
+                // F3：查询成功清除失败标记（不再触发快速失败）
+                guard.last_error = None;
+            }
+            Err(err) => {
+                // F3：记录失败——等待者唤醒后进入快速失败窗口，
+                // 避免 DoH 故障时无限循环（请求永不返回）
+                guard.last_error = Some((Instant::now(), err));
             }
         }
-        // 即使查询失败也要唤醒等待者（唤醒后重新走查询循环）
+        // 即使查询失败也要唤醒等待者（唤醒后走快速失败或查询循环）
         notify.notify_waiters();
     }
 
@@ -1193,6 +1224,7 @@ pub fn create_dynamic_resolver_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::http::is_ech_rejected;
 
     /// 测试环境安装默认 CryptoProvider（EchConfig::new 解析需要）
     fn ensure_crypto_provider() {
@@ -1270,10 +1302,197 @@ mod tests {
             .expect("内置 config 冷启动应成功");
         let config = first.ech_config.expect("应返回内置 config");
         assert_eq!(config, decode_builtin_ech_config().unwrap());
-        // 内置 config 只在首次兜底；第二次查询应走 DoH 路径（无网络时
-        // 会失败），builtin_used 标记已置位
-        let mut guard = transport.cache.lock().await;
-        assert!(guard.builtin_used, "内置 config 使用后应标记 builtin_used");
+        // F6：dom 第一次兜底后置入 builtin_used_hosts
+        let guard = transport.cache.lock().await;
+        assert!(
+            guard.builtin_used_hosts.contains("app-api.pixiv.net"),
+            "内置 config 使用后应标记 builtin_used_hosts"
+        );
         drop(guard);
+    }
+
+    #[tokio::test]
+    async fn test_builtin_per_host_once() {
+        // F6：内置 config 兜底按域名各记一次——oauth 消耗后，
+        // api 首次仍然能兜底（这才是"api 用 ECH 不挂"的关键）
+        let transport = EchTransport::builtin_only();
+        let oauth = transport
+            .lookup_ech_config("oauth.secure.pixiv.net")
+            .await
+            .expect("oauth 首次应兜底");
+        assert_eq!(
+            oauth.ech_config.unwrap(),
+            decode_builtin_ech_config().unwrap()
+        );
+
+        // api 的第二次 lookup 可能命中后台 DoH 刷新的新 config（key 已
+        // 轮换时字节不同）——两者都有效；验证拿到的是有效 ECHConfigList
+        let api = transport
+            .lookup_ech_config("app-api.pixiv.net")
+            .await
+            .expect("api 不应因 oauth 先消耗 builtin 而卡死失败");
+        let api_config = api.ech_config.expect("api 应拿到 config");
+        assert!(
+            api_config.len() >= 4,
+            "config 长度异常: {}",
+            api_config.len()
+        );
+        assert_eq!(
+            &api_config[2..4],
+            &[0xFE, 0x0D],
+            "api 应拿到有效 ECHConfigList（version 0xFE0D）"
+        );
+        assert_eq!(
+            u16::from_be_bytes([api_config[0], api_config[1]]) as usize,
+            api_config.len() - 2,
+            "config 长度字段应自洽"
+        );
+
+        let guard = transport.cache.lock().await;
+        // oauth 实际消耗了 builtin 兜底（已标记）；api 若后台 DoH 先完成
+        // 则直接命中 entry（不会消耗 builtin，也不应被标记）——两种时序
+        // 都正确，仅断言 oauth 标记作为"兜底已生效"证据
+        assert!(
+            guard.builtin_used_hosts.contains("oauth.secure.pixiv.net"),
+            "oauth 域名应已标记"
+        );
+        drop(guard);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_fast_fail_on_doh_error() {
+        // F1/F2：DoH 失败进入快速失败窗口 → lookup 立即返回错误，
+        // 不再无限循环（无网络依赖：预置 last_error + 预置在途任务，
+        // 直接断言快速失败路径，不等待真实 DoH）
+        let transport = EchTransport::builtin_only();
+        // 先让某个域名消耗 builtin，避免走入兜底分支
+        let _ = transport
+            .lookup_ech_config("app-api.pixiv.net")
+            .await
+            .expect("内置兜底应成功");
+        // 预置 DoH 失败标记（模拟 DoH 查询失败后写入的 last_error）
+        transport.cache.lock().await.last_error = Some((
+            Instant::now(),
+            RhttpError::RhttpUnknownError("模拟 DoH 失败".to_string()),
+        ));
+        // 同一域名再次查询：应命中快速失败窗口，立即返回错误（不发起
+        // 新 DoH、不循环），错误内容与预置一致
+        let start = Instant::now();
+        let result = transport.lookup_ech_config("app-api.pixiv.net").await;
+        let fast_failed = matches!(
+            result,
+            Err(RhttpError::RhttpUnknownError(ref msg)) if msg == "模拟 DoH 失败"
+        );
+        assert!(fast_failed, "快速失败应返回预置错误，实际: {result:?}");
+        assert!(
+            start.elapsed() < StdDuration::from_millis(500),
+            "快速失败应即时返回（避免无限加载），实际耗时: {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// 端到端验证：模拟 PixEz api 服务的完整 ECH settings（与
+    /// pixez_network_settings.dart forHost ech 分支一致），真实执行
+    /// DoH 查询 + ECH 握手 + HTTP 请求全链路。
+    /// 手动运行：cargo test -- --ignored test_ech_end_to_end_api
+    #[tokio::test]
+    #[ignore = "真实网络端到端验证（手动运行，需联网）"]
+    async fn test_ech_end_to_end_api() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "app-api.pixiv.net".to_string(),
+            vec![
+                "104.18.10.118".to_string(),
+                "104.18.11.118".to_string(),
+            ],
+        );
+        let settings = ClientSettings {
+            enable_ech: true,
+            require_ech: true,
+            tls_settings: Some(TlsSettings {
+                root_cert_source: RootCertSource::Webpki,
+                trusted_root_certificates: vec![],
+                verify_certificates: true,
+                client_certificate: None,
+                min_tls_version: None,
+                max_tls_version: None,
+                sni: true,
+            }),
+            timeout_settings: Some(TimeoutSettings {
+                timeout: None,
+                connect_timeout: None,
+                keep_alive_timeout: Some(chrono::Duration::seconds(60)),
+                keep_alive_ping: Some(chrono::Duration::seconds(25)),
+            }),
+            dns_settings: Some(DnsSettings::StaticDns(StaticDnsSettings {
+                overrides,
+                fallback: None,
+            })),
+            ..ClientSettings::default()
+        };
+        let client = RequestClient::new(settings).expect("client 创建失败");
+        let url = Url::parse(
+            "https://app-api.pixiv.net/v1/illust/recommended?filter=for_ios&include_ranking_label=true",
+        )
+        .unwrap();
+
+        // 模拟 http.rs 的 T3 自动重试路径：首次握手（builtin/旧 config）
+        // 失败 → invalidate → 重新 lookup（DoH 新 config）→ 重试
+        let host = "app-api.pixiv.net";
+
+        let first = tokio::time::timeout(StdDuration::from_secs(15), async {
+            let effective = client
+                .client_for_url(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            let request = effective
+                .get(url.clone())
+                .build()
+                .map_err(|e| e.to_string())?;
+            effective.execute(request).await.map_err(|e| e.to_string())
+        })
+        .await;
+        println!("首次请求（builtin config）结果: {first:?}");
+        // 首次失败不应挂起
+        assert!(first.is_ok(), "首次请求 15s 超时（挂起！）");
+        let first_err = first.unwrap();
+        if let Err(err_msg) = &first_err {
+            println!(
+                "首次失败是否 ECH 拒绝特征: {}",
+                is_ech_rejected(&RhttpError::RhttpInvalidCertificateError(err_msg.clone()))
+            );
+        }
+
+        // 重试路径：invalidate → 强制 DoH 新 config → 重建 → 重试
+        client.invalidate_ech_for(host).await;
+        let retry = tokio::time::timeout(StdDuration::from_secs(20), async {
+            let effective = client
+                .client_for_url(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            let request = effective
+                .get(url)
+                .build()
+                .map_err(|e| e.to_string())?;
+            effective.execute(request).await.map_err(|e| e.to_string())
+        })
+        .await;
+
+        match retry {
+            Ok(Ok(response)) => {
+                println!(
+                    "✅ 重试成功（DoH 新 config）：status = {}",
+                    response.status()
+                );
+            }
+            Ok(Err(e)) => {
+                println!("❌ 重试失败: {e}");
+                panic!("ECH 重试失败: {e}");
+            }
+            Err(_) => {
+                println!("❌ 重试 20s 超时（挂起！）");
+                panic!("ECH 重试超时——请求挂起");
+            }
+        }
     }
 }

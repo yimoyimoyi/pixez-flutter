@@ -56,8 +56,10 @@ abstract class _IllustStoreBase with Store {
   }
 
   @action
-  fetch() async {
+  fetch({bool recordHistory = true}) async {
     errorMessage = null;
+    // 仅详情成功加载后才允许写入浏览历史（失败/转圈返回不应计入）
+    var detailLoaded = false;
     if (illusts == null ||
         illusts?.caption == null ||
         illusts?.caption.isEmpty == true) {
@@ -72,6 +74,7 @@ abstract class _IllustStoreBase with Store {
         isBookmark = illusts!.isBookmarked;
         state = illusts?.isBookmarked ?? isBookmark ? 2 : 0;
         captionFetching = false;
+        detailLoaded = true;
       } on DioException catch (e) {
         captionFetching = false;
         if (captionEmtpyCase) {
@@ -93,8 +96,13 @@ abstract class _IllustStoreBase with Store {
           }
         }
       }
+    } else {
+      // 传入数据完整（列表 → 详情直接展示），无需请求即视为加载成功
+      detailLoaded = true;
     }
-    if (illusts != null) {
+    // 记录条件：详情加载成功 + 允许记录（查看器预构建页 deferHistory
+    // 由查看器在用户实际浏览到时统一记录）
+    if (detailLoaded && illusts != null && recordHistory) {
       try {
         History.insertIllust(illusts!);
       } catch (e) {}

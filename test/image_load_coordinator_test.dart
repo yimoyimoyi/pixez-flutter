@@ -70,6 +70,7 @@ void main() {
 
   group('暂停门控与节流恢复（F8/F12）', () {
     test('暂停期间新注册入队不放行，退出后节流唤醒', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
       fakeAsync((async) {
         final c = ImageLoadCoordinator.create();
         ImageLoadCoordinator.enterDetailMode();
@@ -89,6 +90,7 @@ void main() {
     });
 
     test('ignoreGlobalPause 实例（详情页）暂停期间仍放行', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
       fakeAsync((async) {
         final c = ImageLoadCoordinator.create(ignoreGlobalPause: true);
         ImageLoadCoordinator.enterDetailMode();
@@ -105,6 +107,7 @@ void main() {
     });
 
     test('退出详情模式后节流：每 16ms 限量放行，防 burst 尖峰', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
       fakeAsync((async) {
         final c = ImageLoadCoordinator.create();
         ImageLoadCoordinator.enterDetailMode();
@@ -129,6 +132,7 @@ void main() {
     });
 
     test('maxConcurrent 满后剩余排队，release 时全量放行', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
       fakeAsync((async) {
         final c = ImageLoadCoordinator.create();
         ImageLoadCoordinator.enterDetailMode();
@@ -149,6 +153,90 @@ void main() {
         c.release('q0');
         expect(ready.length, 7);
         expect(c.activeCount, 6, reason: '释放 1 个补 1 个');
+        c.dispose();
+      });
+    });
+  });
+
+  group('全局暂停泄漏自愈与排队超时（F16/F17）', () {
+    test('暂停泄漏自愈：暂停超阈值后列表 register 强制恢复', () {
+      // 无论成功失败都恢复全局状态，避免静态 _globalPaused 残留污染
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
+      fakeAsync((async) {
+        final c = ImageLoadCoordinator.create();
+        // 模拟泄漏：进入详情模式但 dispose 未执行（_detailCount 残留）
+        ImageLoadCoordinator.enterDetailMode();
+        // 刚暂停时 register 正常入队（详情页正开着，保留暂停门控）
+        expect(c.register('a', 0, () {}), isFalse,
+            reason: '暂停初期列表 register 仍应入队（保留暂停门控）');
+        expect(c.queueLength, 1);
+
+        // 超过泄漏阈值（10s）：列表再次 register → 自愈恢复
+        async.elapse(const Duration(seconds: 11));
+        final ready = <String>[];
+        expect(c.register('b', 0, () => ready.add('b')), isTrue,
+            reason: '暂停泄漏（超阈值）时 register 应自愈并立即获槽位');
+        expect(ready, isEmpty, reason: '获槽位不触发 onReady');
+        expect(c.activeCount, 1);
+
+        c.dispose();
+      });
+    });
+
+    test('详情页实例（ignoreGlobalPause）不触发自愈', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
+      fakeAsync((async) {
+        final c = ImageLoadCoordinator.create(ignoreGlobalPause: true);
+        ImageLoadCoordinator.enterDetailMode();
+        async.elapse(const Duration(seconds: 11));
+
+        // 详情页自身大图：暂停期间正常获槽位，且不触发自愈恢复
+        expect(c.register('a', 0, () {}), isTrue);
+        expect(c.activeCount, 1);
+
+        c.dispose();
+      });
+    });
+
+    test('排队超时兜底：超过 queueTimeoutSeconds 直接放行', () {
+      fakeAsync((async) {
+        final c = ImageLoadCoordinator.create();
+        final ready = <String>[];
+        // 占满 6 个槽位（启动清理定时器）
+        for (var i = 0; i < 6; i++) {
+          c.register('u$i', i, () {});
+        }
+        // 第 7 个排队
+        expect(c.register('pending', 6, () => ready.add('pending')), isFalse);
+        expect(c.queueLength, 1);
+
+        // 超过排队超时（5s）：elapse 11s 触发 10s 周期清理定时器，
+        // queuedAt 差值 11s > 5s → 放行
+        async.elapse(const Duration(seconds: 11));
+        expect(ready, ['pending'], reason: '排队超时应直接放行（绕过协调器）');
+        expect(c.queueLength, 0);
+        expect(c.activeCount, 6, reason: '放行不占槽位（绕过协调器）');
+
+        c.dispose();
+      });
+    });
+
+    test('全局暂停期间排队超时也放行（防永久无图）', () {
+      addTearDown(ImageLoadCoordinator.exitDetailMode);
+      fakeAsync((async) {
+        final c = ImageLoadCoordinator.create();
+        ImageLoadCoordinator.enterDetailMode();
+
+        // 暂停期间注册：入队（暂停分支已确保清理定时器启动）
+        final ready = <String>[];
+        expect(c.register('a', 0, () => ready.add('a')), isFalse);
+        expect(c.queueLength, 1);
+
+        // 即使全局暂停未恢复，排队超时兜底仍放行（11s 触发 10s 定时器）
+        async.elapse(const Duration(seconds: 11));
+        expect(ready, ['a'], reason: '暂停期间排队超时应放行');
+        expect(c.queueLength, 0);
+
         c.dispose();
       });
     });

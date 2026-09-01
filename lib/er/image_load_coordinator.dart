@@ -14,6 +14,7 @@
 /// - 泄漏会导致所有后续图片永久排队
 
 import 'dart:async';
+import 'package:clock/clock.dart';
 import 'package:flutter/widgets.dart';
 
 class _LoadEntry implements Comparable<_LoadEntry> {
@@ -21,9 +22,16 @@ class _LoadEntry implements Comparable<_LoadEntry> {
   int priority;
   // 同一 URL 可能有多个等待组件（重复作品/头像），获槽位时全部唤醒
   final List<void Function()> onReadyCallbacks;
+  // 入队时间：排队超时兜底（杜绝任何原因导致的永久排队无图）。
+  // 用 clock.now() 而非 DateTime.now()：fakeAsync 测试可推进时钟
+  final DateTime queuedAt;
 
   _LoadEntry(
-      {required this.url, required this.priority, required this.onReadyCallbacks});
+      {required this.url,
+      required this.priority,
+      required this.onReadyCallbacks,
+      DateTime? queuedAt})
+      : queuedAt = queuedAt ?? clock.now();
 
   @override
   int compareTo(_LoadEntry other) => priority.compareTo(other.priority);
@@ -37,11 +45,11 @@ class _ActiveSlot {
   // 初始值 = 获槽位条目的等待回调数（排队合并的多组件各自占一份引用）
   int refCount;
   _ActiveSlot({required this.url, int refCount = 1})
-      : startTime = DateTime.now(),
+      : startTime = clock.now(),
         refCount = refCount;
 
   bool get isExpired =>
-      DateTime.now().difference(startTime) > const Duration(seconds: 30);
+      clock.now().difference(startTime) > const Duration(seconds: 30);
 }
 
 class ImageLoadCoordinator {
@@ -53,6 +61,11 @@ class ImageLoadCoordinator {
 
   /// 槽位超时（秒）
   static const int slotTimeoutSeconds = 30;
+
+  /// 排队超时（秒）：超过该时长未获槽位（全局暂停泄漏、槽位异常占用
+  /// 等）直接放行加载，绕过协调器——杜绝"有列表但图片永远不加载"。
+  /// 正常网络下单张图片 <5s，超时多为异常场景，放行代价可接受
+  static const int queueTimeoutSeconds = 5;
 
   /// 全局回退实例（无列表作用域的 PixivImage 使用，如非列表场景）
   static final ImageLoadCoordinator instance = ImageLoadCoordinator._();
@@ -67,10 +80,26 @@ class ImageLoadCoordinator {
   static int _detailCount = 0;
   static bool _globalPaused = false;
 
+  /// 泄漏判定定时器：详情模式进入 [leakThreshold] 后置位"已超阈值"，
+  /// 供 register 自愈区分"详情页正开着"（刚暂停，列表入队合理）与
+  /// "详情页已离开但 dispose 未执行"（暂停超时泄漏）。用 Timer 而非
+  /// 时间戳比较：测试可推进（fakeAsync），且避免真实时钟依赖
+  static Timer? _leakTimer;
+  static bool _pausedExceeded = false;
+
+  /// 暂停持续超过该时长后，列表实例 register 视为泄漏并强制恢复。
+  /// 详情页正常浏览通常 <10s 即回到列表
+  static const Duration leakThreshold = Duration(seconds: 10);
+
   /// 进入详情模式：暂停队列唤醒（不中断已活跃的请求）
   static void enterDetailMode() {
     _detailCount++;
     _globalPaused = true;
+    _pausedExceeded = false;
+    _leakTimer?.cancel();
+    _leakTimer = Timer(leakThreshold, () {
+      _pausedExceeded = true;
+    });
   }
 
   /// 退出详情模式：恢复队列唤醒。
@@ -80,6 +109,9 @@ class ImageLoadCoordinator {
   static void exitDetailMode() {
     if (_detailCount > 0) _detailCount--;
     _globalPaused = _detailCount > 0;
+    _leakTimer?.cancel();
+    _leakTimer = null;
+    _pausedExceeded = false;
     if (!_globalPaused) {
       _scheduleThrottledDrain();
     }
@@ -168,6 +200,21 @@ class ImageLoadCoordinator {
   /// 返回 true 表示可以立刻加载（获得槽位）。
   /// 返回 false 表示槽位已满，已加入排队，[onReady] 将在槽位释放时被调用。
   bool register(String url, int basePriority, void Function() onReady) {
+    // 全局暂停泄漏自愈：列表实例（非详情页）在暂停**超过阈值**后仍
+    // 尝试注册新图片，说明"详情页已离开但 dispose 未执行"（桌面端
+    // 路由保留、详情页内跳转搜索页等）——强制恢复全局状态，避免列表
+    // 图片永久排队（有列表但无图）。刚暂停（<10s）的 register 仍正常
+    // 入队（详情页正开着，列表在栈下 rebuild）；详情页自身实例
+    // ignoreGlobalPause=true 不参与
+    if (_globalPaused && !ignoreGlobalPause && _pausedExceeded) {
+      _detailCount = 0;
+      _globalPaused = false;
+      _leakTimer?.cancel();
+      _leakTimer = null;
+      _pausedExceeded = false;
+      _scheduleThrottledDrain();
+    }
+
     // 去重：同一 URL 已在加载中时，组件共享同一底层加载任务
     //（Flutter ImageCache 按 key 合并 pending），只记账一次。
     // 注意：此检查放于暂停门控之前——在飞请求共享不受暂停影响
@@ -191,6 +238,9 @@ class ImageLoadCoordinator {
       _queue.add(_LoadEntry(
           url: url, priority: priority, onReadyCallbacks: [onReady]));
       _queue.sort();
+      // 暂停期间可能无活跃槽位（定时器未启动）：入队即确保清理定时器，
+      // 让排队超时兜底（queueTimeoutSeconds）也能覆盖暂停入队的项
+      _ensureCleanupTimer();
       return false;
     }
 
@@ -288,7 +338,9 @@ class ImageLoadCoordinator {
     return released;
   }
 
-  /// 超时自动释放：清理超过 [slotTimeoutSeconds] 的槽位
+  /// 超时自动释放：清理超过 [slotTimeoutSeconds] 的槽位；
+  /// 排队超过 [queueTimeoutSeconds] 的项直接放行（绕过协调器加载，
+  /// 杜绝全局暂停泄漏等场景下的永久无图）
   void _expireStaleSlots() {
     final expired = <String>[];
     for (final slot in _activeSlots) {
@@ -300,7 +352,21 @@ class ImageLoadCoordinator {
       _activeUrls.remove(url);
       _activeSlots.removeWhere((s) => s.url == url);
     }
-    if (expired.isNotEmpty) {
+
+    // 排队超时兜底：入队超过阈值（含全局暂停期间入队的）直接放行
+    final staleQueued = _queue
+        .where((e) =>
+            clock.now().difference(e.queuedAt) >
+            const Duration(seconds: queueTimeoutSeconds))
+        .toList();
+    for (final entry in staleQueued) {
+      _queue.remove(entry);
+      for (final onReady in entry.onReadyCallbacks) {
+        onReady();
+      }
+    }
+
+    if (expired.isNotEmpty || staleQueued.isNotEmpty) {
       _drainQueue();
     }
 

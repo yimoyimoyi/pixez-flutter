@@ -22,7 +22,11 @@ import 'package:pixez/fluent/page/picture/illust_vertical_page.dart';
 
 class IllustLightingPage extends IllustItemsPage {
   const IllustLightingPage(
-      {Key? key, required super.id, super.heroString, super.store})
+      {Key? key,
+      required super.id,
+      super.heroString,
+      super.store,
+      super.deferHistory})
       : super(key: key);
 
   @override
