@@ -71,8 +71,16 @@ class UploadedImageSpan extends WidgetSpan {
               },
               child: Container(
                 color: Colors.grey.shade200,
-                child: PixivImage(imageUrl,
-                    width: double.infinity, fit: BoxFit.fitWidth),
+                child: PixivImage(
+                  imageUrl,
+                  width: double.infinity,
+                  fit: BoxFit.fitWidth,
+                  // 全宽大图按屏宽 × dpr 解码，避免原图全尺寸解码 OOM
+                  memCacheWidth:
+                      (MediaQuery.of(context).size.width *
+                              MediaQuery.of(context).devicePixelRatio)
+                          .round(),
+                ),
               ),
             );
           },

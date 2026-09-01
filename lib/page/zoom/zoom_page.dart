@@ -41,7 +41,15 @@ class _ZoomPageState extends State<ZoomPage> {
       ),
       body: Center(
         child: PinchZoomImage(
-          image: PixivImage(widget.url),
+          // 按屏宽 × dpr 解码：原图全尺寸解码可达上百 MB（曾致 OOM 白屏），
+          // 缩放放大时的清晰度由 dpr 分辨率保证
+          image: PixivImage(
+            widget.url,
+            memCacheWidth:
+                (MediaQuery.of(context).size.width *
+                        MediaQuery.of(context).devicePixelRatio)
+                    .round(),
+          ),
           onZoomStart: () {
             print('Zoom started');
             setState(() {

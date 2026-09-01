@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_compatibility_layer/dio_compatibility_layer.dart';
 import 'package:flutter/material.dart';
@@ -227,6 +228,19 @@ class _PixivImageState extends State<PixivImage> {
     // 供 dispose 等阶段使用缓存引用
     _coordinator = ImageLoadCoordinator.of(context);
     super.initState();
+
+    // 大图漏配 memCacheWidth 告警：原图（5000×7000）全尺寸解码单帧可达
+    // 上百 MB，且以全尺寸条目挤占 ImageCache——曾导致详情页 OOM 白屏。
+    // 宽 ≥800 视为大图场景，缩略图/头像不触发
+    if (kDebugMode) {
+      final w = widget.width;
+      if (w != null && w >= 800 && widget.memCacheWidth == null) {
+        debugPrint(
+          'PixivImage 警告: 大图(width=$w)未传 memCacheWidth，将全尺寸解码，'
+          '内存可达上百 MB。请按显示宽度 × dpr 传入，见详情页 _displayCacheWidth',
+        );
+      }
+    }
 
     // 如果参与了优先级协调，立即注册槽位（同步，无帧延迟）
     if (widget.priorityIndex != null) {
