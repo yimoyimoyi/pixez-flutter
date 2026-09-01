@@ -83,7 +83,7 @@ class _IllustRowPageState extends State<IllustRowPage>
       controlFinishRefresh: true,
     );
     _scrollController = ScrollController();
-    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
+    _detailCoordinator = ImageLoadCoordinator.create();
     _illustStore = widget.store ?? IllustStore(widget.id, null);
     _illustStore.fetch();
     _aboutStore = IllustAboutStore(widget.id, _refreshController);
@@ -151,15 +151,19 @@ class _IllustRowPageState extends State<IllustRowPage>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                CommonBackArea(),
-                IconButton(
-                  icon: Icon(Icons.home_outlined, size: 22),
-                  onPressed: () => Navigator.of(context)
-                      .popUntil((route) => route.isFirst),
-                  tooltip: '主页',
-                ),
-              ]),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CommonBackArea(),
+                  IconButton(
+                    icon: Icon(Icons.home_outlined, size: 22),
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).popUntil((route) => route.isFirst),
+                    tooltip: '主页',
+                  ),
+                ],
+              ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -189,107 +193,106 @@ class _IllustRowPageState extends State<IllustRowPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    // 详情页打开期间冻结列表协调器队列 + 详情页专用协调器
-    //（忽略全局暂停、限制详情大图并发）
-    return DetailModeScope(
-      child: ImageCoordinatorScope(
-        coordinator: _detailCoordinator,
-        child: Scaffold(
-      extendBody: true,
-      // appBar: AppBar(
-      //   elevation: 0.0,
-      //   // iconTheme: IconTheme.of(context).copyWith(color: Theme.of(context).textTheme!.bodyText1!.color),
-      //   backgroundColor: Colors.transparent,
-      //   actions: [
-      //     IconButton(
-      //         icon: Icon(Icons.more_vert),
-      //         onPressed: () {
-      //           buildShowModalBottomSheet(context, _illustStore.illusts!);
-      //         })
-      //   ],
-      // ),
-      extendBodyBehindAppBar: true,
-      floatingActionButton: GestureDetector(
-        onLongPress: () {
-          _showBookMarkTag();
-        },
-        onHorizontalDragEnd: (details) {
-          if (widget.onHorizontalDragEnd != null) {
-            widget.onHorizontalDragEnd!(details);
-          }
-        },
-        child: Observer(
-          builder: (context) {
-            return Visibility(
-              visible: _illustStore.errorMessage == null,
-              child: FloatingActionButton(
-                heroTag: widget.id,
-                backgroundColor: Colors.white,
-                onPressed: () => _illustStore.star(
-  restrict: userSetting.defaultPrivateLike ? "private" : "public",
-),
-                child: Observer(
-                  builder: (_) {
-                    return StarIcon(state: _illustStore.state);
-                  },
-                ),
-              ),
-            );
+    // 详情页专用协调器（限制详情大图并发）
+    return ImageCoordinatorScope(
+      coordinator: _detailCoordinator,
+      child: Scaffold(
+        extendBody: true,
+        // appBar: AppBar(
+        //   elevation: 0.0,
+        //   // iconTheme: IconTheme.of(context).copyWith(color: Theme.of(context).textTheme!.bodyText1!.color),
+        //   backgroundColor: Colors.transparent,
+        //   actions: [
+        //     IconButton(
+        //         icon: Icon(Icons.more_vert),
+        //         onPressed: () {
+        //           buildShowModalBottomSheet(context, _illustStore.illusts!);
+        //         })
+        //   ],
+        // ),
+        extendBodyBehindAppBar: true,
+        floatingActionButton: GestureDetector(
+          onLongPress: () {
+            _showBookMarkTag();
           },
+          onHorizontalDragEnd: (details) {
+            if (widget.onHorizontalDragEnd != null) {
+              widget.onHorizontalDragEnd!(details);
+            }
+          },
+          child: Observer(
+            builder: (context) {
+              return Visibility(
+                visible: _illustStore.errorMessage == null,
+                child: FloatingActionButton(
+                  heroTag: widget.id,
+                  backgroundColor: Colors.white,
+                  onPressed: () => _illustStore.star(
+                    restrict: userSetting.defaultPrivateLike
+                        ? "private"
+                        : "public",
+                  ),
+                  child: Observer(
+                    builder: (_) {
+                      return StarIcon(state: _illustStore.state);
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
         ),
-      ),
-      body: Observer(
-        builder: (_) {
-          if (!tempView)
-            for (var i in muteStore.banillusts) {
-              if (i.illustId == widget.id.toString()) {
-                return BanPage(
-                  name: "${I18n.of(context).illust}\n${i.name}\n",
-                  onPressed: () {
-                    setState(() {
-                      tempView = true;
-                    });
-                  },
-                );
-              }
-            }
-          if (!tempView && _illustStore.illusts != null) {
-            for (var j in muteStore.banUserIds) {
-              if (j.userId == _illustStore.illusts!.user.id.toString()) {
-                return BanPage(
-                  name: "${I18n.of(context).painter}\n${j.name}\n",
-                  onPressed: () {
-                    setState(() {
-                      tempView = true;
-                    });
-                  },
-                );
-              }
-            }
-            for (var t in muteStore.banTags) {
-              for (var t1 in _illustStore.illusts!.tags) {
-                if (t.name == t1.name)
+        body: Observer(
+          builder: (_) {
+            if (!tempView)
+              for (var i in muteStore.banillusts) {
+                if (i.illustId == widget.id.toString()) {
                   return BanPage(
-                    name: "${I18n.of(context).tag}\n${t.name}\n",
+                    name: "${I18n.of(context).illust}\n${i.name}\n",
                     onPressed: () {
                       setState(() {
                         tempView = true;
                       });
                     },
                   );
+                }
+              }
+            if (!tempView && _illustStore.illusts != null) {
+              for (var j in muteStore.banUserIds) {
+                if (j.userId == _illustStore.illusts!.user.id.toString()) {
+                  return BanPage(
+                    name: "${I18n.of(context).painter}\n${j.name}\n",
+                    onPressed: () {
+                      setState(() {
+                        tempView = true;
+                      });
+                    },
+                  );
+                }
+              }
+              for (var t in muteStore.banTags) {
+                for (var t1 in _illustStore.illusts!.tags) {
+                  if (t.name == t1.name)
+                    return BanPage(
+                      name: "${I18n.of(context).tag}\n${t.name}\n",
+                      onPressed: () {
+                        setState(() {
+                          tempView = true;
+                        });
+                      },
+                    );
+                }
               }
             }
-          }
-          return Container(
-            child: Stack(
-              children: [
-                _buildContent(context, _illustStore.illusts),
-                _buildAppbar(),
-              ],
-            ),
-          );
-        },
-        ),
+            return Container(
+              child: Stack(
+                children: [
+                  _buildContent(context, _illustStore.illusts),
+                  _buildAppbar(),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -647,9 +650,7 @@ class _IllustRowPageState extends State<IllustRowPage>
                   tag: widget.heroString,
                 )
               : NullHero(
-                  child: PixivImage(
-                    illust.metaPages[index].imageUrls!.medium,
-                  ),
+                  child: PixivImage(illust.metaPages[index].imageUrls!.medium),
                   tag: widget.heroString,
                 ))
         : PixivImage(
@@ -1060,8 +1061,10 @@ class _IllustRowPageState extends State<IllustRowPage>
       barrierColor: Colors.black.withValues(alpha: 0.35),
       transitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
-        final width =
-            (MediaQuery.sizeOf(dialogContext).width - 24).clamp(0.0, 320.0);
+        final width = (MediaQuery.sizeOf(dialogContext).width - 24).clamp(
+          0.0,
+          320.0,
+        );
         return SafeArea(
           child: Align(
             alignment: Alignment.topRight,
@@ -1087,7 +1090,9 @@ class _IllustRowPageState extends State<IllustRowPage>
                         _buildNameAvatar(dialogContext, illusts),
                         if (illusts.metaPages.isNotEmpty)
                           ListTile(
-                            title: Text(I18n.of(dialogContext).muti_choice_save),
+                            title: Text(
+                              I18n.of(dialogContext).muti_choice_save,
+                            ),
                             leading: Icon(Icons.save),
                             onTap: () async {
                               Navigator.of(dialogContext).pop();
@@ -1098,8 +1103,9 @@ class _IllustRowPageState extends State<IllustRowPage>
                           title: Text(I18n.of(dialogContext).copymessage),
                           leading: Icon(Icons.local_library),
                           onTap: () async {
-                            final str =
-                                userSetting.illustToShareInfoText(illusts);
+                            final str = userSetting.illustToShareInfoText(
+                              illusts,
+                            );
                             await Clipboard.setData(ClipboardData(text: str));
                             BotToast.showText(
                               text: I18n.of(dialogContext).copied_to_clipboard,
@@ -1160,8 +1166,9 @@ class _IllustRowPageState extends State<IllustRowPage>
                               builder: (context) {
                                 return AlertDialog(
                                   title: Text(I18n.of(context).report),
-                                  content:
-                                      Text(I18n.of(context).report_message),
+                                  content: Text(
+                                    I18n.of(context).report_message,
+                                  ),
                                   actions: <Widget>[
                                     TextButton(
                                       child: Text(I18n.of(context).cancel),

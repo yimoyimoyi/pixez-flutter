@@ -162,7 +162,7 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       controlFinishRefresh: true,
     );
     _scrollController = ScrollController();
-    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
+    _detailCoordinator = ImageLoadCoordinator.create();
     _illustStore = widget.store ?? IllustStore(widget.id, null);
     _illustStore.fetch(recordHistory: !widget.deferHistory);
     _aboutStore = IllustAboutStore(widget.id, _refreshController);
@@ -233,15 +233,19 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                CommonBackArea(),
-                IconButton(
-                  icon: Icon(Icons.home_outlined, size: 22),
-                  onPressed: () => Navigator.of(context)
-                      .popUntil((route) => route.isFirst),
-                  tooltip: '主页',
-                ),
-              ]),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CommonBackArea(),
+                  IconButton(
+                    icon: Icon(Icons.home_outlined, size: 22),
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).popUntil((route) => route.isFirst),
+                    tooltip: '主页',
+                  ),
+                ],
+              ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -287,15 +291,10 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    // 详情页打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）
-    // 详情页打开期间冻结列表协调器队列 + 详情页专用协调器
-    //（忽略全局暂停——否则 priorityIndex 注册会被暂停门控拦截导致
-    // 详情大图永不加载；并限制详情大图并发）
-    return DetailModeScope(
-      child: ImageCoordinatorScope(
-        coordinator: _detailCoordinator,
-        child: _buildBody(context),
-      ),
+    // 详情页专用协调器（限制详情大图并发）
+    return ImageCoordinatorScope(
+      coordinator: _detailCoordinator,
+      child: _buildBody(context),
     );
   }
 
@@ -362,7 +361,8 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                         tags: tags,
                       );
                       if (success && userSetting.followAfterStar) {
-                        bool followSuccess = await _illustStore.followAfterStar();
+                        bool followSuccess = await _illustStore
+                            .followAfterStar();
                         if (followSuccess) {
                           userStore?.isFollow = true;
                           BotToast.showText(
@@ -1264,8 +1264,10 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       barrierColor: Colors.black.withValues(alpha: 0.35),
       transitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
-        final width =
-            (MediaQuery.sizeOf(dialogContext).width - 24).clamp(0.0, 320.0);
+        final width = (MediaQuery.sizeOf(dialogContext).width - 24).clamp(
+          0.0,
+          320.0,
+        );
         return SafeArea(
           child: Align(
             alignment: Alignment.topRight,
@@ -1291,7 +1293,9 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                         _buildNameAvatar(dialogContext, illusts),
                         if (illusts.metaPages.isNotEmpty)
                           ListTile(
-                            title: Text(I18n.of(dialogContext).muti_choice_save),
+                            title: Text(
+                              I18n.of(dialogContext).muti_choice_save,
+                            ),
                             leading: Icon(Icons.save),
                             onTap: () async {
                               Navigator.of(dialogContext).pop();
@@ -1302,8 +1306,9 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                           title: Text(I18n.of(dialogContext).copymessage),
                           leading: Icon(Icons.local_library),
                           onTap: () async {
-                            final str =
-                                userSetting.illustToShareInfoText(illusts);
+                            final str = userSetting.illustToShareInfoText(
+                              illusts,
+                            );
                             await Clipboard.setData(ClipboardData(text: str));
                             BotToast.showText(
                               text: I18n.of(dialogContext).copied_to_clipboard,
@@ -1375,8 +1380,9 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
                                 builder: (context) {
                                   return AlertDialog(
                                     title: Text(I18n.of(context).report),
-                                    content:
-                                        Text(I18n.of(context).report_message),
+                                    content: Text(
+                                      I18n.of(context).report_message,
+                                    ),
                                     actions: <Widget>[
                                       TextButton(
                                         child: Text(I18n.of(context).cancel),
@@ -1437,7 +1443,11 @@ class _IllustVerticalPageState extends State<IllustVerticalPage>
       if (userSetting.saveAfterStar && (_illustStore.state == 0)) {
         saveStore.saveImage(_illustStore.illusts!);
       }
-      bool success = await _illustStore.star(restrict: restrict, tags: tags, force: true);
+      bool success = await _illustStore.star(
+        restrict: restrict,
+        tags: tags,
+        force: true,
+      );
       if (success && userSetting.followAfterStar) {
         await _illustStore.followAfterStar();
       }

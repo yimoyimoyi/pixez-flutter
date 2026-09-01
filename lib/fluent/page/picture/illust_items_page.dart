@@ -73,7 +73,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
     // widget.relay.more =
     //     () => buildshowBottomSheet(context, _illustStore.illusts!);
 
-    _detailCoordinator = ImageLoadCoordinator.create(ignoreGlobalPause: true);
+    _detailCoordinator = ImageLoadCoordinator.create();
     illustStore = widget.store ?? IllustStore(widget.id, null);
     illustStore.fetch(recordHistory: !widget.deferHistory);
     aboutStore = IllustAboutStore(widget.id, refreshController);
@@ -114,94 +114,91 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    // 详情页打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）；
-    // 子树内图片使用详情页专用协调器（忽略全局暂停、限制详情大图并发）
-    return DetailModeScope(
-      child: ImageCoordinatorScope(
-        coordinator: _detailCoordinator,
-        child: ScaffoldPage(
-          content: Observer(
-        builder: (_) {
-          if (!tempView)
-            for (var i in muteStore.banillusts) {
-              if (i.illustId == widget.id.toString()) {
-                return BanPage(
-                  name: "${I18n.of(context).illust}\n${i.name}\n",
-                  onPressed: () {
-                    setState(() {
-                      tempView = true;
-                    });
-                  },
-                );
-              }
-            }
-          if (!tempView && illustStore.illusts != null) {
-            for (var j in muteStore.banUserIds) {
-              if (j.userId == illustStore.illusts!.user.id.toString()) {
-                return BanPage(
-                  name: "${I18n.of(context).painter}\n${j.name}\n",
-                  onPressed: () {
-                    setState(() {
-                      tempView = true;
-                    });
-                  },
-                );
-              }
-            }
-            for (var t in muteStore.banTags) {
-              for (var t1 in illustStore.illusts!.tags) {
-                if (t.name == t1.name)
+    // 子树内图片使用详情页专用协调器（限制详情大图并发）
+    return ImageCoordinatorScope(
+      coordinator: _detailCoordinator,
+      child: ScaffoldPage(
+        content: Observer(
+          builder: (_) {
+            if (!tempView)
+              for (var i in muteStore.banillusts) {
+                if (i.illustId == widget.id.toString()) {
                   return BanPage(
-                    name: "${I18n.of(context).tag}\n${t.name}\n",
+                    name: "${I18n.of(context).illust}\n${i.name}\n",
                     onPressed: () {
                       setState(() {
                         tempView = true;
                       });
                     },
                   );
+                }
+              }
+            if (!tempView && illustStore.illusts != null) {
+              for (var j in muteStore.banUserIds) {
+                if (j.userId == illustStore.illusts!.user.id.toString()) {
+                  return BanPage(
+                    name: "${I18n.of(context).painter}\n${j.name}\n",
+                    onPressed: () {
+                      setState(() {
+                        tempView = true;
+                      });
+                    },
+                  );
+                }
+              }
+              for (var t in muteStore.banTags) {
+                for (var t1 in illustStore.illusts!.tags) {
+                  if (t.name == t1.name)
+                    return BanPage(
+                      name: "${I18n.of(context).tag}\n${t.name}\n",
+                      onPressed: () {
+                        setState(() {
+                          tempView = true;
+                        });
+                      },
+                    );
+                }
               }
             }
-          }
-          return Stack(
-            alignment: AlignmentDirectional.bottomEnd,
-            children: [
-              buildContent(context, illustStore.illusts),
-              Container(
-                margin: EdgeInsets.only(right: 8.0, bottom: 8.0),
-                child: ContextMenu(
-                  child: ButtonTheme(
-                    child: IconButton(
-                      icon: Observer(
-                        builder: (_) => StarIcon(state: illustStore.state),
-                      ),
-                      onPressed: star,
-                    ),
-                    data: ButtonThemeData(
-                      iconButtonStyle: ButtonStyle(
-                        backgroundColor: WidgetStateProperty.all(
-                          FluentTheme.of(context).inactiveBackgroundColor,
+            return Stack(
+              alignment: AlignmentDirectional.bottomEnd,
+              children: [
+                buildContent(context, illustStore.illusts),
+                Container(
+                  margin: EdgeInsets.only(right: 8.0, bottom: 8.0),
+                  child: ContextMenu(
+                    child: ButtonTheme(
+                      child: IconButton(
+                        icon: Observer(
+                          builder: (_) => StarIcon(state: illustStore.state),
                         ),
-                        shadowColor: WidgetStateProperty.all(
-                          FluentTheme.of(context).shadowColor,
+                        onPressed: star,
+                      ),
+                      data: ButtonThemeData(
+                        iconButtonStyle: ButtonStyle(
+                          backgroundColor: WidgetStateProperty.all(
+                            FluentTheme.of(context).inactiveBackgroundColor,
+                          ),
+                          shadowColor: WidgetStateProperty.all(
+                            FluentTheme.of(context).shadowColor,
+                          ),
+                          shape: WidgetStateProperty.all(CircleBorder()),
                         ),
-                        shape: WidgetStateProperty.all(CircleBorder()),
                       ),
                     ),
+                    items: [
+                      MenuFlyoutItem(
+                        text: Text(I18n.of(context).favorited_tag),
+                        onPressed: () async {
+                          await showBookMarkTag();
+                        },
+                      ),
+                    ],
                   ),
-                  items: [
-                    MenuFlyoutItem(
-                      text: Text(I18n.of(context).favorited_tag),
-                      onPressed: () async {
-                        await showBookMarkTag();
-                      },
-                    ),
-                  ],
                 ),
-              ),
-            ],
-          );
-        },
-        ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -302,8 +299,10 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
   /// [maxKeepAliveBytes] 水位（120MB）时不保活，改走文件缓存重建
   bool _shouldKeepAlive(Illusts data, double width) {
     if (data.metaPages.length > 8) return false;
-    final px = (width * MediaQuery.of(context).devicePixelRatio)
-        .clamp(1.0, 2048.0);
+    final px = (width * MediaQuery.of(context).devicePixelRatio).clamp(
+      1.0,
+      2048.0,
+    );
     final estBytesPerPage = px * px * 4;
     const maxKeepAliveBytes = 120 * 1024 * 1024;
     return data.metaPages.length * estBytesPerPage < maxKeepAliveBytes;
@@ -448,9 +447,7 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                   tag: widget.heroString,
                 )
               : NullHero(
-                  child: PixivImage(
-                    illust.illustDetailImageUrl(index),
-                  ),
+                  child: PixivImage(illust.illustDetailImageUrl(index)),
                   tag: widget.heroString,
                 ))
         : PixivImage(

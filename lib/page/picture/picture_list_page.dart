@@ -1,7 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:pixez/er/image_load_coordinator.dart';
 import 'package:pixez/lighting/lighting_store.dart';
 import 'package:pixez/page/history/history_store.dart';
 import 'package:pixez/page/picture/illust_lighting_page.dart';
@@ -14,13 +13,13 @@ class PictureListPage extends StatefulWidget {
   final String? heroString;
   final LightingStore? lightingStore;
 
-  const PictureListPage(
-      {Key? key,
-      required this.lightingStore,
-      required this.store,
-      required this.iStores,
-      this.heroString})
-      : super(key: key);
+  const PictureListPage({
+    Key? key,
+    required this.lightingStore,
+    required this.store,
+    required this.iStores,
+    this.heroString,
+  }) : super(key: key);
 
   @override
   _PictureListPageState createState() => _PictureListPageState();
@@ -87,8 +86,7 @@ class _PictureListPageState extends State<PictureListPage> {
   void _onPointerDown(PointerDownEvent e) {
     // 鼠标仅主键参与横滑：右键/中键拖拽（文本选择、中键滚动）
     // 不触发切页——Listener 不参与手势竞技场，需手动过滤
-    if (e.kind == PointerDeviceKind.mouse &&
-        e.buttons != kPrimaryMouseButton) {
+    if (e.kind == PointerDeviceKind.mouse && e.buttons != kPrimaryMouseButton) {
       _pointerDownPos = null;
       return;
     }
@@ -154,7 +152,8 @@ class _PictureListPageState extends State<PictureListPage> {
     final avgV = durationMs > 0 ? _totalDx * 1000 / durationMs : 0.0;
     // 拖拽后停顿（末次 move 距今 >100ms）：瞬时速度视为 0——
     // 否则静止前的瞬时速度残留，导致"拖住停住再松手"被误判为高速切页
-    final isStale = _lastMoveTs != null &&
+    final isStale =
+        _lastMoveTs != null &&
         (e.timeStamp - _lastMoveTs!).inMilliseconds > 100;
     final effectiveInstantV = isStale ? 0.0 : _releaseVelocityDx;
     final v = effectiveInstantV.abs() > 0 ? effectiveInstantV : avgV;
@@ -192,26 +191,27 @@ class _PictureListPageState extends State<PictureListPage> {
     final token = _gestureToken;
     _evaluating = true;
     _pageController
-        .animateToPage(target,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic)
+        .animateToPage(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        )
         .then((_) {
-      _evaluating = false;
-      // 旧手势的动画回调不更新状态（新手势已开始）
-      if (mounted && token == _gestureToken) {
-        setState(() => nowPosition = target);
-        // 翻页完成：用户实际浏览到新页，计入浏览历史
-        _recordCurrentHistory();
-      }
-    });
+          _evaluating = false;
+          // 旧手势的动画回调不更新状态（新手势已开始）
+          if (mounted && token == _gestureToken) {
+            setState(() => nowPosition = target);
+            // 翻页完成：用户实际浏览到新页，计入浏览历史
+            _recordCurrentHistory();
+          }
+        });
   }
 
   @override
   Widget build(BuildContext context) {
     _pageWidth = MediaQuery.of(context).size.width;
-    // 查看器打开期间冻结列表协调器队列（封装组件自动配对 enter/exit）
-    return DetailModeScope(
-      child: Observer(builder: (_) {
+    return Observer(
+      builder: (_) {
         // 自定义跟手滑动：Listener 观察式方向判定（不参与手势竞技场，
         // 内层纵向滚动永远正常）——横向主导才激活跟手，松手后判定
         //（速度优先/位移兜底）→ 平滑切换或回弹
@@ -229,9 +229,7 @@ class _PictureListPageState extends State<PictureListPage> {
             allowImplicitScrolling: true,
             itemBuilder: (BuildContext context, int index) {
               if (index == _iStores.length && _lightingStore != null) {
-                return PictureListNextPage(
-                  lightingStore: _lightingStore!,
-                );
+                return PictureListNextPage(lightingStore: _lightingStore!);
               }
               final f = _iStores[index];
               String? tag = nowPosition == index ? widget.heroString : null;
@@ -246,7 +244,7 @@ class _PictureListPageState extends State<PictureListPage> {
             itemCount: _iStores.length + 1,
           ),
         );
-      }),
+      },
     );
   }
 }
@@ -291,17 +289,20 @@ class _PictureListNextPageState extends State<PictureListNextPage> {
       return Scaffold(
         appBar: AppBar(),
         body: Container(
-            child: Center(
-          child: Column(children: [
-            Text("Load Failed"),
-            TextButton(
-                onPressed: () => _maybeFetch(false), child: Text("Retry"))
-          ]),
-        )),
+          child: Center(
+            child: Column(
+              children: [
+                Text("Load Failed"),
+                TextButton(
+                  onPressed: () => _maybeFetch(false),
+                  child: Text("Retry"),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
-    return Scaffold(
-      body: Center(child: CircularProgressIndicator()),
-    );
+    return Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
