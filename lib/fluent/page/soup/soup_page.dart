@@ -16,7 +16,6 @@
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
-import 'package:flutter/material.dart' show Colors, SelectableText;
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/fluent/component/painter_avatar.dart';
 import 'package:pixez/fluent/component/pixez_button.dart';
@@ -24,6 +23,7 @@ import 'package:pixez/fluent/component/pixiv_image.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/am_article_card.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:pixez/models/spotlight_response.dart';
 import 'package:pixez/fluent/page/picture/illust_lighting_page.dart';
@@ -145,7 +145,8 @@ class _SoupPageState extends State<SoupPage> {
     if (_soupStore.isLoading) {
       return Center(child: ProgressRing());
     }
-    if (_soupStore.amWorks.isEmpty) {
+    if (_soupStore.amWorks.isEmpty && _soupStore.amArticles.isEmpty) {
+      final isText = _soupStore.isTextArticle;
       return Center(
         child: Padding(
           padding: EdgeInsets.all(32),
@@ -170,12 +171,31 @@ class _SoupPageState extends State<SoupPage> {
                     textAlign: TextAlign.center),
                 SizedBox(height: 16),
               ],
-              Icon(FluentIcons.cloud, size: 48),
+              Icon(
+                isText ? FluentIcons.text_document : FluentIcons.cloud,
+                size: 48,
+              ),
               SizedBox(height: 12),
-              Text('正文加载失败'),
+              Text(isText ? '文字专栏特辑' : '正文加载失败'),
               SizedBox(height: 4),
-              Text(_soupStore.errorMessage ?? '请检查网络连接后重试',
-                  textAlign: TextAlign.center),
+              Text(
+                _soupStore.errorMessage ?? '请检查网络连接后重试',
+                textAlign: TextAlign.center,
+              ),
+              if (isText) ...[
+                SizedBox(height: 16),
+                Button(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FluentIcons.open_in_new_window, size: 14),
+                      SizedBox(width: 6),
+                      Text('在浏览器中打开'),
+                    ],
+                  ),
+                  onPressed: () => launchUrl(Uri.parse(widget.url)),
+                ),
+              ],
               // 调试日志入口仅 debug 模式展示（排查用）
               if (kDebugMode && _soupStore.logText.isNotEmpty) ...[
                 SizedBox(height: 12),
@@ -192,6 +212,83 @@ class _SoupPageState extends State<SoupPage> {
     final count = (MediaQuery.of(context).orientation == Orientation.portrait)
         ? userSetting.crossCount
         : userSetting.hCrossCount;
+
+    if (_soupStore.amArticles.isNotEmpty) {
+      return CustomScrollView(
+        slivers: [
+          SliverWaterfallFlow(
+            gridDelegate: SliverWaterfallFlowDelegateWithFixedCrossAxisCount(
+              crossAxisCount: count,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (BuildContext context, int index) {
+                if (index == 0) {
+                  if (_soupStore.description == null ||
+                      _soupStore.description!.isEmpty) {
+                    return Container(height: 1);
+                  }
+                  return Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text(_soupStore.description ?? ''),
+                    ),
+                  );
+                }
+                AmArticleCard card = _soupStore.amArticles[index - 1];
+                return PixEzButton(
+                  child: Card(
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        if (card.thumbnail.isNotEmpty)
+                          PixivImage(
+                            card.thumbnail,
+                            width: double.infinity,
+                            height: 180,
+                            fit: BoxFit.cover,
+                          ),
+                        ListTile(
+                          title: Text(
+                            card.title,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            '${card.category}${card.date.isNotEmpty ? ' · ${card.date}' : ''}',
+                          ),
+                          trailing: const Icon(FluentIcons.chevron_right),
+                        ),
+                      ],
+                    ),
+                  ),
+                  onPressed: () {
+                    Leader.push(
+                      context,
+                      SoupPage(
+                        url: card.articleUrl,
+                        spotlight: SpotlightArticle(
+                          id: int.tryParse(card.id) ?? 0,
+                          title: card.title,
+                          pureTitle: card.title,
+                          thumbnail: card.thumbnail,
+                          articleUrl: card.articleUrl,
+                          publishDate: DateTime.tryParse(
+                                  card.date.replaceAll('.', '-')) ??
+                              DateTime.now(),
+                        ),
+                      ),
+                      icon: const Icon(FluentIcons.all_apps),
+                      title: Text(card.title),
+                    );
+                  },
+                );
+              },
+              childCount: _soupStore.amArticles.length + 1,
+            ),
+          ),
+        ],
+      );
+    }
 
     return CustomScrollView(
       slivers: [
