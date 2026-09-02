@@ -25,9 +25,16 @@ class PixezNetworkSettings {
         ),
         // ECH 模式保活：切后台一段时间后 NAT/服务端会断开空闲连接，
         // 回来时首请求会撞死连接卡顿。keepAlive 只作用于已建立的空闲
-        // 连接（TCP keepalive + HTTP/2 PING），不影响首连与慢请求，
-        // 与 compatible 模式曾回滚的 connectTimeout/总超时语义零重叠
+        // 连接（TCP keepalive + HTTP/2 PING），不影响首连与慢请求
         timeoutSettings: r.TimeoutSettings(
+          // 保底超时（区别于 compatible 模式的回滚教训——该语义针对
+          // 图片慢连接与息屏在途请求，而此处只覆盖 ECH 直连 API 的
+          // 建连/握手/响应头真空段）：切网、黑洞、半死连接下把"挂起"
+          // 变成可重试的失败。正常 ECH 直连 <1s，总预算 5s + 拦截器
+          // 1 次重试 → 端到端最坏 ~10s 收敛（不再 2~10 分钟无声转圈）
+          timeout: const Duration(seconds: 5),
+          // TCP 建连单独收紧：SYN 黑洞 3s 判死，不吞总预算
+          connectTimeout: const Duration(seconds: 3),
           keepAliveTimeout: const Duration(seconds: 60),
           keepAlivePing: const Duration(seconds: 25),
         ),

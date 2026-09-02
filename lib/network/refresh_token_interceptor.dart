@@ -20,6 +20,7 @@ import 'package:pixez/main.dart';
 import 'package:pixez/models/account.dart';
 import 'package:pixez/models/error_message.dart';
 import 'package:pixez/network/api_client.dart';
+import 'package:pixez/network/network_mode.dart';
 import 'package:pixez/network/oauth_client.dart';
 
 class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
@@ -192,9 +193,13 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
         return handler.reject(err);
       }
     }
-    // 自动重试：仅在没有收到响应时（连接/传输层错误），上限 2 次（per-request 计数）
+    // 自动重试：仅在没有收到响应时（连接/传输层错误），per-request 计数。
+    // ech 模式带 5s 总超时（见 pixez_network_settings ech 分支）：重试上限
+    // 收窄为 1 次（总尝试 2 次），与退避 0.5s 构成 ~10s 端到端预算；
+    // 其他模式无总超时，保持原有 2 次重试不变
+    final retryLimit = userSetting.networkMode == NetworkMode.ech ? 1 : 2;
     final retryNum = err.requestOptions.extra[_retryCountKey] as int? ?? 0;
-    if (err.response == null && retryNum < 2) {
+    if (err.response == null && retryNum < retryLimit) {
       final errMsg = '${err.message ?? ''} ${err.error ?? ''}';
       final shouldRetry = err.type == DioExceptionType.unknown ||
           err.type == DioExceptionType.connectionError ||
@@ -206,7 +211,7 @@ class RefreshTokenInterceptor extends QueuedInterceptorsWrapper {
       if (shouldRetry) {
         final safeMsg = errMsg.length > 100 ? errMsg.substring(0, 100) : errMsg;
         print('retry $retryNum ========= ${err.type}: $safeMsg');
-        await Future.delayed(Duration(milliseconds: 300 << retryNum));
+        await Future.delayed(Duration(milliseconds: 500));
         try {
           RequestOptions options = err.requestOptions;
           var response = await apiClient.httpClient.request(
