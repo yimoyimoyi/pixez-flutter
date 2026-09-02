@@ -24,6 +24,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:pixez/er/hoster.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/models/am_article_block.dart';
 import 'package:pixez/models/am_article_card.dart';
 import 'package:pixez/models/amwork.dart';
 import 'package:rhttp/rhttp.dart' as r;
@@ -37,11 +38,23 @@ abstract class _SoupStoreBase with Store {
   @observable
   late Dio dio;
 
+  /// 视觉特辑作品流模式下的作品(视觉特辑/老布局)
   ObservableList<AmWork> amWorks = ObservableList();
+
+  /// 合集/栏目列表页的卡片(单篇特辑入口,全部类型放行)
   ObservableList<AmArticleCard> amArticles = ObservableList();
 
+  /// 文章阅读模式的正文块(专访/专栏/图文混排等非纯作品页)
+  ObservableList<AmArticleBlock> articleBlocks = ObservableList();
+
   @observable
-  bool isTextArticle = false;
+  String? articleTitle;
+
+  @observable
+  String? articleCategory;
+
+  @observable
+  String? articleDate;
 
   bool get isCollection => amArticles.isNotEmpty;
 
@@ -121,7 +134,10 @@ abstract class _SoupStoreBase with Store {
     errorMessage = null;
     amWorks.clear();
     amArticles.clear();
-    isTextArticle = false;
+    articleBlocks.clear();
+    articleTitle = null;
+    articleCategory = null;
+    articleDate = null;
     description = null;
     isLoading = true;
     _log('fetch start, url=$url');
@@ -140,15 +156,15 @@ abstract class _SoupStoreBase with Store {
       isLoading = false;
     }
 
-    if (amWorks.isEmpty && amArticles.isEmpty && errorMessage == null) {
-      if (isTextArticle) {
-        errorMessage = '本文为文字专栏特辑，不包含插画作品';
-      } else {
-        errorMessage = '未提取到作品（amWorks 与 amArticles 均为空）';
-      }
-      _log('amWorks and amArticles STILL empty after doFetch');
+    if (amWorks.isEmpty &&
+        amArticles.isEmpty &&
+        articleBlocks.isEmpty &&
+        errorMessage == null) {
+      errorMessage = '未提取到可展示内容（作品/卡片/正文均为空）';
+      _log('amWorks/amArticles/articleBlocks STILL empty after doFetch');
     }
-    _log('fetch done, amWorks=${amWorks.length}, amArticles=${amArticles.length}, error=$errorMessage');
+    _log('fetch done, works=${amWorks.length}, cards=${amArticles.length}, '
+        'blocks=${articleBlocks.length}, error=$errorMessage');
   }
 
   Future<void> _doFetch(String url) async {
@@ -183,7 +199,14 @@ abstract class _SoupStoreBase with Store {
       return;
     }
 
-    // HTML 解析
+    _parseHtmlBody(body);
+  }
+
+  // ---------------------------------------------------------------------
+  // HTML 解析(与网络解耦,测试可注入真实 HTML)
+  // ---------------------------------------------------------------------
+
+  void _parseHtmlBody(String body) {
     var document = parse(body);
     _log('HTML parsed');
 
@@ -199,6 +222,174 @@ abstract class _SoupStoreBase with Store {
       if (header != null) description = header.text.trim();
     }
 
+    // 单篇文章正文页：pixivision 用 article.am__article-body-container
+    // 包裹(2026-09 实测);合集/栏目列表页没有该容器
+    final articleBody =
+        document.querySelector('article.am__article-body-container');
+    if (articleBody != null) {
+      _parseArticleBody(articleBody);
+      return;
+    }
+    _parseCollectionOrLegacy(document);
+  }
+
+  /// 单篇文章正文页解析：视觉特辑走作品流模式(与旧 UI 一致);
+  /// 含问答/大段文字的专访、专栏等走文章块模式(articleBlocks)
+  void _parseArticleBody(Element articleBody) {
+    // 文章头部元信息(分类/日期/标题)
+    final header = articleBody.querySelector('header.am__header');
+    final titleEl = header?.querySelector('h1.am__title');
+    final catEl = header?.querySelector('.am__categoty-pr');
+    final dateEl = header?.querySelector('time');
+    articleTitle =
+        titleEl?.text.trim().isNotEmpty == true ? titleEl!.text.trim() : null;
+    articleCategory =
+        catEl?.text.trim().isNotEmpty == true ? catEl!.text.trim() : null;
+    articleDate =
+        dateEl?.text.trim().isNotEmpty == true ? dateEl!.text.trim() : null;
+    _log('article header: title=$articleTitle cat=$articleCategory date=$articleDate');
+
+    // 作品与正文块统计,决定渲染模式
+    final works1 = articleBody.querySelectorAll('.am__work');
+    final items = articleBody.querySelectorAll('.article-item');
+    _log('article body: .am__work=${works1.length}, .article-item=${items.length}');
+
+    // 文字型块(段落/来信/问答)计数：视觉特辑通常只有 0~1 个导语段
+    int textyCount = 0;
+    for (var item in items) {
+      final c = item.attributes['class'] ?? '';
+      if (c.contains('__paragraph') ||
+          c.contains('__question') ||
+          c.contains('__answer') ||
+          c.contains('__link')) {
+        textyCount++;
+      }
+    }
+
+    // 视觉特辑(作品为主) → 保持既有作品流 UI
+    if (works1.isNotEmpty && textyCount <= 1) {
+      _log('visual article (works=${works1.length}, texty=$textyCount) -> works mode');
+      for (var work in works1) {
+        _parseAmWork(work);
+      }
+      return;
+    }
+
+    // 专访/专栏/图文混排 → 文章块模式
+    for (var item in items) {
+      final blocks = _parseArticleItem(item);
+      for (final block in blocks) {
+        articleBlocks.add(block);
+      }
+    }
+    if (articleBlocks.isNotEmpty) {
+      _log('article mode: parsed ${articleBlocks.length} blocks');
+      return;
+    }
+
+    // 无作品也解析不出块：兼容旧布局兜底尝试,再失败则报错
+    if (works1.isNotEmpty) {
+      _log('fallback to works mode after empty blocks');
+      for (var work in works1) {
+        _parseAmWork(work);
+      }
+      return;
+    }
+    errorMessage = '未能解析文章正文结构（article-item 为空）';
+    _log('article body parse failed: no works, no blocks');
+  }
+
+  /// 将一个 .article-item 正文块转为模型列表(单块可能含多个作品);
+  /// 不支持的块类型返回空列表
+  List<AmArticleBlock> _parseArticleItem(Element item) {
+    final c = item.attributes['class'] ?? '';
+    if (c.contains('__paragraph') ||
+        c.contains('__question') ||
+        c.contains('__link') ||
+        c.contains('__answer') ||
+        c.contains('__heading') ||
+        c.contains('__credit') ||
+        c.contains('__caption')) {
+      // 文本类块统一富文本解析(<b> 加粗 / <a> 链接白名单)
+      AmArticleBlockType type;
+      Element? scope;
+      if (c.contains('__question') || c.contains('__link')) {
+        // 来信/提问(咨询来信 comment-content 语义等同 question)
+        type = AmArticleBlockType.question;
+      } else if (c.contains('__answer')) {
+        type = AmArticleBlockType.answer;
+        // 回答正文在 .answer-text(块内前半是作答者头像图)
+        scope = item.querySelector('.answer-text');
+      } else if (c.contains('__heading')) {
+        type = AmArticleBlockType.heading;
+      } else if (c.contains('__credit')) {
+        type = AmArticleBlockType.credit;
+      } else if (c.contains('__caption')) {
+        type = AmArticleBlockType.caption;
+      } else {
+        type = AmArticleBlockType.paragraph;
+      }
+      final rich = _richSpans(scope ?? item);
+      return [
+        AmArticleBlock(
+          type: type,
+          text: _spansPlainText(rich),
+          spans: rich,
+        ),
+      ];
+    }
+    if (c.contains('__image')) {
+      final img = item.querySelector('img');
+      final src = img?.attributes['src'] ?? '';
+      if (src.isEmpty) return const [];
+      return [
+        AmArticleBlock(type: AmArticleBlockType.image, imageUrl: src),
+      ];
+    }
+    if (c.contains('__pixiv_illust')) {
+      // 一个块内含 1..n 个 .am__work(实测多为 1),每个作品一个块
+      final works = item.querySelectorAll('.am__work');
+      final blocks = <AmArticleBlock>[];
+      for (final work in works) {
+        final block = _workBlock(work);
+        if (block != null) blocks.add(block);
+      }
+      return blocks;
+    }
+    if (c.contains('__article_card')) {
+      // 文末相关特辑卡(._article-card),构造为可点开的卡片块
+      final card = item.querySelector('._article-card') ?? item;
+      final data = _readCard(card);
+      if (data == null) return const [];
+      return [
+        AmArticleBlock(
+          type: AmArticleBlockType.articleCard,
+          text: data.title,
+          imageUrl: data.thumbnail,
+          linkUrl: data.articleUrl,
+        ),
+      ];
+    }
+    // 其他(profile/movie/table_of_contents/article_thumbnail 等)暂不渲染
+    return const [];
+  }
+
+  AmArticleBlock? _workBlock(Element work) {
+    final parsed = _parseWorkElement(work);
+    if (parsed == null) return null;
+    return AmArticleBlock(
+      type: AmArticleBlockType.pixivIllust,
+      text: parsed.title ?? '',
+      imageUrl: parsed.showImage ?? '',
+      linkUrl: parsed.arworkLink ?? '',
+      work: parsed,
+    );
+  }
+
+  /// 合集/栏目列表页(或旧版布局):优先解析全部卡片
+  /// (._article-card + 首页头条 ._article-eyecatch-card,按文档序),
+  /// 无卡片时回退旧逻辑(作品元素扫描)
+  void _parseCollectionOrLegacy(Document document) {
     // 方法1: 桌面版 .am__work
     final works1 = document.querySelectorAll('.am__work');
     _log('.am__work (desktop) = ${works1.length}');
@@ -211,7 +402,7 @@ abstract class _SoupStoreBase with Store {
     final works2 = document.getElementsByClassName('am__work');
     _log('.am__work via class = ${works2.length}');
 
-    // 方法3: 直接搜索所有 div 的 class
+    // 直接搜索所有 div 的 class
     final allDivs = document.getElementsByTagName('div');
     int workCount = 0;
     for (var d in allDivs) {
@@ -219,15 +410,21 @@ abstract class _SoupStoreBase with Store {
     }
     _log('.am__work via manual scan = $workCount');
 
-    // 方法4: 列出所有含 "work" 或 "illust" 的 class
-    final relevantClasses = <String>{};
-    for (var d in allDivs) {
-      final c = d.attributes['class'] ?? '';
-      if (c.contains('work') || c.contains('illust') || c.contains('am_')) {
-        relevantClasses.add(c);
+    // 卡片(单篇特辑入口):普通卡 + 首页头条卡,一律放行
+    final cards =
+        document.querySelectorAll('._article-card, ._article-eyecatch-card');
+    _log('article cards found: ${cards.length} '
+        '(eyecatch=${document.querySelectorAll('._article-eyecatch-card').length})');
+    if (cards.isNotEmpty) {
+      for (var card in cards) {
+        _parseArticleCard(card);
       }
+      if (amArticles.isEmpty) {
+        errorMessage = '卡片解析失败（卡片存在但未提取到链接）';
+        _log('cards exist but none parsed');
+      }
+      return;
     }
-    _log('relevant classes: $relevantClasses');
 
     // 使用找到的元素（优先桌面版，回退手机版）
     var workElements = works1.isNotEmpty ? works1 : works2;
@@ -236,56 +433,18 @@ abstract class _SoupStoreBase with Store {
     if (isMobile) {
       workElements = worksSp;
       _log('using mobile layout');
-      // 手机版用不同的解析方式
       for (var work in worksSp) {
         _parseMobileWork(work);
       }
     } else if (workElements.isEmpty && workCount == 0) {
-      // 检查是否为特辑合集页面（正文包含多个 _article-card 特辑推荐卡片）
-      final bodyContainer =
-          document.querySelector('article.am__article-body-container') ??
-              document.querySelector('.am__body') ??
-              document.querySelector('._feature-article-body') ??
-              document.body;
-
-      final cards = bodyContainer?.querySelectorAll('._article-card') ?? [];
-      _log('collection article cards found: ${cards.length}');
-
-      if (cards.isNotEmpty) {
-        for (var card in cards) {
-          _parseArticleCard(card);
-        }
-      }
-
-      if (amArticles.isNotEmpty) {
-        _log('parsed ${amArticles.length} collection articles (text articles filtered)');
-        return;
-      }
-
-      // 如果卡片全被过滤掉，或者根本没有卡片，检查是否是文字专栏特辑
-      final pageCategory =
-          document.querySelector('.am__categoty-pr')?.text.trim() ?? '';
-      final pageHeading =
-          document.querySelector('h1.am__title')?.text.trim() ?? '';
-      if (_isTextCategory(pageCategory) ||
-          url.contains('/c/column') ||
-          url.contains('/c/news') ||
-          pageHeading.contains('的咨询') ||
-          pageHeading.contains('の相談') ||
-          (cards.isNotEmpty && amArticles.isEmpty)) {
-        isTextArticle = true;
-        errorMessage = '本文为文字专栏特辑，不包含插画作品';
-        _log('detected text-only column article');
-        return;
-      }
-
+      // 既无卡片也无作品:兜底输出日志帮助定位
       final articles = document.getElementsByTagName('article');
       _log('articles found: ${articles.length}');
       if (articles.isNotEmpty) {
         final art = articles.first;
         _log('article outerHtml[0..800]=${art.outerHtml.substring(0, art.outerHtml.length < 800 ? art.outerHtml.length : 800)}');
       }
-      errorMessage = '未找到作品元素（class 列表见日志）';
+      errorMessage = '未找到作品元素或卡片（class 列表见日志）';
       return;
     } else {
       for (var work in workElements) {
@@ -345,8 +504,8 @@ abstract class _SoupStoreBase with Store {
     }
   }
 
-  /// 解析桌面版 .am__work 元素
-  void _parseAmWork(Element work) {
+  /// 解析单个 .am__work 作品元素为模型(不加入 amWorks)
+  AmWork? _parseWorkElement(Element work) {
     AmWork amWork = AmWork();
     final links = work.getElementsByTagName('a');
     final imgs = work.getElementsByTagName('img');
@@ -397,62 +556,116 @@ abstract class _SoupStoreBase with Store {
     }
 
     if (amWork.userLink != null && amWork.arworkLink != null) {
-      amWorks.add(amWork);
-      _log('added work "${amWork.title}" by ${amWork.user}');
+      return amWork;
     }
+    return null;
   }
 
-  /// 判断是否为文字类特辑分类（专栏、新闻、小说等）
-  bool _isTextCategory(String text) {
-    final lower = text.toLowerCase();
-    return lower.contains('column') ||
-        lower.contains('专栏') ||
-        lower.contains('コラム') ||
-        lower.contains('news') ||
-        lower.contains('新闻') ||
-        lower.contains('ニュース') ||
-        lower.contains('novel') ||
-        lower.contains('小说') ||
-        lower.contains('小説') ||
-        lower.contains('inspiration');
+  /// 解析桌面版 .am__work 元素(作品流模式)
+  void _parseAmWork(Element work) {
+    final amWork = _parseWorkElement(work);
+    if (amWork == null) {
+      _log('work parse skipped (missing link)');
+      return;
+    }
+    amWorks.add(amWork);
+    _log('added work "${amWork.title}" by ${amWork.user}');
   }
 
-  /// 解析特辑合集中的 ._article-card 元素，直接过滤掉文字特辑
-  void _parseArticleCard(Element card) {
-    final cardClasses = card.attributes['class'] ?? '';
+  /// 解析正文富文本为有序行内片段(白名单: <b>/<strong> 加粗、<a> 链接;
+  /// 其余标签只透传文本)。段落(p/li/标题)之间插入空行,<br> 单换行。
+  List<AmInlineSpan> _richSpans(Element container) {
+    // 排版块级(p/标题/li/blockquote);div 等容器不算(避免嵌套重复空行)
+    const blockTags = {
+      'p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote',
+    };
 
-    // 1. 分类信息
+    List<AmInlineSpan> walk(Node node, bool bold, String? link) {
+      if (node is Text) {
+        final t = node.data;
+        return t.isEmpty ? const [] : [AmInlineSpan(text: t, bold: bold, link: link)];
+      }
+      if (node is! Element) return const [];
+      final tag = node.localName;
+      if (tag == 'br') {
+        return const [AmInlineSpan(text: '\n')];
+      }
+      var childBold = bold;
+      var childLink = link;
+      if (tag == 'b' || tag == 'strong') childBold = true;
+      if (tag == 'a') {
+        final href = node.attributes['href'];
+        if (href != null && href.isNotEmpty) childLink = href;
+      }
+      final sub = <AmInlineSpan>[];
+      for (final c in node.nodes) {
+        sub.addAll(walk(c, childBold, childLink));
+      }
+      if (blockTags.contains(tag)) {
+        // 空段落(全空白)丢弃;否则段落尾部加空行(段间距)
+        if (!sub.any((s) => s.text.trim().isNotEmpty)) return const [];
+        return [...sub, const AmInlineSpan(text: '\n\n')];
+      }
+      return sub;
+    }
+
+    final raw = walk(container, false, null);
+    // 归一:合并相邻同格式片段;压缩多余空行;去掉首尾空行
+    final out = <AmInlineSpan>[];
+    for (final s in raw) {
+      final t = s.text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+      if (t.isEmpty) continue;
+      final last = out.isEmpty ? null : out.last;
+      if (last != null && last.bold == s.bold && last.link == s.link) {
+        out[out.length - 1] = AmInlineSpan(
+            text: last.text + t, bold: last.bold, link: last.link);
+      } else {
+        out.add(AmInlineSpan(text: t, bold: s.bold, link: s.link));
+      }
+    }
+    while (out.isNotEmpty && out.first.text.trim().isEmpty) {
+      out.removeAt(0);
+    }
+    while (out.isNotEmpty && out.last.text.trim().isEmpty) {
+      out.removeLast();
+    }
+    return out;
+  }
+
+  /// 富文本片段拼接为纯文本(压缩空白,段落以空行分隔)
+  String _spansPlainText(List<AmInlineSpan> spans) {
+    return spans
+        .map((s) => s.text)
+        .join()
+        .replaceAll(RegExp(r'[ \t\r]+'), ' ')
+        .trim();
+  }
+
+  /// 解析集合/文末卡片(兼容 ._article-card 与 ._article-eyecatch-card
+  /// 两种前缀结构),返回卡片数据;无有效链接返回 null
+  _CardData? _readCard(Element card) {
+    // 分类:标签 span(arc/aec 前缀)优先,回退分类链接
     final catEl = card.querySelector('.arc__thumbnail-label') ??
+        card.querySelector('.aec__thumbnail-label') ??
         card.querySelector('a[href*="/c/"]');
     final catName = catEl?.text.trim() ?? '';
     final catHref = catEl?.attributes['href'] ?? '';
 
-    // 2. 标题和链接
-    final titleEl = card.querySelector('.arc__title a');
+    // 标题与文章链接(arc/aec 两种卡片)
+    final titleEl = card.querySelector('.arc__title a') ??
+        card.querySelector('.aec__title a');
     final title = titleEl?.text.trim() ?? '';
     var href = titleEl?.attributes['href'] ?? '';
     if (href.isEmpty) {
       final aEl = card.querySelector('a[href*="/a/"]');
       href = aEl?.attributes['href'] ?? '';
     }
-    if (href.isEmpty) return;
-
-    // 过滤文字特辑：专栏、新闻、小说、灵感等
-    if (_isTextCategory(cardClasses) ||
-        _isTextCategory(catName) ||
-        _isTextCategory(catHref) ||
-        title.contains('的咨询') ||
-        title.contains('の相談')) {
-      _log('filtered text article card: "$title" [$catName]');
-      return;
-    }
+    if (href.isEmpty) return null;
 
     final fullUrl =
         href.startsWith('http') ? href : 'https://www.pixivision.net$href';
-    final idMatch = RegExp(r'/a/(\d+)').firstMatch(href);
-    final id = idMatch?.group(1) ?? '';
 
-    // 3. 封面缩略图
+    // 封面缩略图(style 背景图优先,回退 <img>)
     String thumbnail = '';
     final thumbDiv = card.querySelector('._thumbnail');
     final style = thumbDiv?.attributes['style'] ?? '';
@@ -466,26 +679,75 @@ abstract class _SoupStoreBase with Store {
       thumbnail = img?.attributes['src'] ?? '';
     }
 
-    // 4. 日期
+    // 日期
     final dateEl =
         card.querySelector('time._date') ?? card.querySelector('time');
     final date = dateEl?.text.trim() ?? '';
 
-    amArticles.add(AmArticleCard(
-      id: id,
+    return _CardData(
       title: title,
       articleUrl: fullUrl,
       thumbnail: thumbnail,
-      category: catName.isNotEmpty ? catName : '插画',
+      category: catName.isNotEmpty ? catName : (catHref.isNotEmpty ? catHref.split('/c/').last : ''),
       date: date,
-    ));
-    _log('added collection article card: "$title"');
+    );
   }
 
+  /// 合集/栏目列表页卡片解析(全部类型放行:特辑/专访/专栏/趣闻等)
+  void _parseArticleCard(Element card) {
+    final data = _readCard(card);
+    if (data == null) {
+      _log('skipped article card (no link): "${card.text.trim().substring(0, card.text.trim().length < 60 ? card.text.trim().length : 60)}"');
+      return;
+    }
+    amArticles.add(AmArticleCard(
+      id: data.idFromUrl,
+      title: data.title,
+      articleUrl: data.articleUrl,
+      thumbnail: data.thumbnail,
+      category: data.category,
+      date: data.date,
+    ));
+    _log('added article card: "${data.title}"');
+  }
+
+  /// 测试入口:与 fetch() 相同语义——先清空上一页状态再解析
   @visibleForTesting
-  bool testIsTextCategory(String text) => _isTextCategory(text);
+  void testParseHtml(String html) {
+    errorMessage = null;
+    amWorks.clear();
+    amArticles.clear();
+    articleBlocks.clear();
+    articleTitle = null;
+    articleCategory = null;
+    articleDate = null;
+    description = null;
+    _parseHtmlBody(html);
+  }
 
   @visibleForTesting
   void testParseArticleCard(Element card) => _parseArticleCard(card);
 }
 
+/// 卡片解析中间数据(集合卡与文章块共用)
+class _CardData {
+  final String title;
+  final String articleUrl;
+  final String thumbnail;
+  final String category;
+  final String date;
+
+  _CardData({
+    required this.title,
+    required this.articleUrl,
+    required this.thumbnail,
+    required this.category,
+    required this.date,
+  });
+
+  /// 从文章 URL 提取 id(/zh/a/12345 → 12345),失败返回空串
+  String get idFromUrl {
+    final m = RegExp(r'/a/(\d+)').firstMatch(articleUrl);
+    return m?.group(1) ?? '';
+  }
+}
