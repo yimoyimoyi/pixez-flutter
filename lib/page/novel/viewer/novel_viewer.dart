@@ -307,6 +307,71 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
     );
   }
 
+  /// 小说标题"显示译文"开关（手动触发语义：点击翻译后显示，再点切回原文）
+  bool _titleShowTranslated = false;
+
+  Future<void> _toggleNovelTitleTranslation(BuildContext context) async {
+    final service = TranslationService.instance;
+    final title = _novelStore.novel!.title;
+    setState(() {
+      _titleShowTranslated = !_titleShowTranslated;
+    });
+    if (_titleShowTranslated && title.trim().isNotEmpty) {
+      final ok = await service.translateTitle(title);
+      if (!ok && mounted) {
+        BotToast.showText(
+          text:
+              I18n.of(context).translation_failed +
+              service.describeLastError(),
+        );
+      }
+    }
+  }
+
+  /// 小说标题行：译文/原文 + "翻译/原文"切换按钮。
+  /// 局部 Observer：译文到达只重建标题行，不影响正文列表；
+  /// 未开启标题翻译时保持老布局（无按钮）。
+  Widget _buildNovelTitleRow(BuildContext context) {
+    return Observer(builder: (_) {
+      final service = TranslationService.instance;
+      const type = TranslateContentType.title;
+      final title = _novelStore.novel!.title;
+      final pending = service.isPendingOf(title, type);
+      final translated = service.translatedOf(title, type);
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              _titleShowTranslated ? (translated ?? title) : title,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          if (service.isTypeEnabled(type))
+            SizedBox(
+              height: 32,
+              child: TextButton.icon(
+                icon: pending
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.translate, size: 16),
+                label: Text(
+                  _titleShowTranslated
+                      ? I18n.of(context).translation_show_original
+                      : I18n.of(context).translate,
+                  style: const TextStyle(fontSize: 13),
+                ),
+                onPressed: () => _toggleNovelTitleTranslation(context),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
   Widget _buildHeader(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
@@ -329,14 +394,11 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
           Padding(
             padding: const EdgeInsets.only(
               left: 16.0,
-              right: 16.0,
+              right: 8.0,
               top: 12.0,
               bottom: 8.0,
             ),
-            child: Text(
-              "${_novelStore.novel!.title}",
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            child: _buildNovelTitleRow(context),
           ),
           if (_novelStore.novel?.series.id != null)
             Padding(
@@ -401,7 +463,12 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
                   contextMenuBuilder: (context, editableTextState) {
                     return _buildSelectionMenu(editableTextState, context);
                   },
-                  child: SelectableHtml(data: _novelStore.novel?.caption ?? ""),
+                  child: SelectableHtml(
+                    data: _novelStore.novel?.caption ?? "",
+                    // 简介翻译：与图片详情一致，组件内自带"翻译/原文"按钮与失败提示
+                    translateType: TranslateContentType.caption,
+                    translateId: 'novel:${_novelStore.novel?.id}',
+                  ),
                 ),
               ),
               shape: RoundedRectangleBorder(

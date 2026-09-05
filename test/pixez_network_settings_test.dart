@@ -19,10 +19,10 @@ void main() {
         const Duration(seconds: 60),
       );
       expect(s.timeoutSettings!.keepAlivePing, const Duration(seconds: 25));
-      // 仅 ECH 分支有保活；timeout/connectTimeout 保持未设置（避免
-      // 历史回归：connectTimeout 误杀慢连接、总超时挂起在途请求）
-      expect(s.timeoutSettings!.timeout, isNull);
-      expect(s.timeoutSettings!.connectTimeout, isNull);
+      // 仅 ECH 分支有保活；timeout/connectTimeout 为保底值（语义：把
+      // 切网/黑洞/半死连接下的"挂起"变成可重试失败；正常 ECH <1s）
+      expect(s.timeoutSettings!.timeout, const Duration(seconds: 5));
+      expect(s.timeoutSettings!.connectTimeout, const Duration(seconds: 3));
     });
 
     test('compat 模式不设置超时（保活仅作用于 ECH 分支）', () {
