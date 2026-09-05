@@ -152,11 +152,6 @@ class TranslationConfig {
     if (cfg == null || cfg.engine == TranslateEngineOption.off) {
       return TranslateEngineOption.off;
     }
-    // Bing 免 key 通道已被微软停用/风控（2026-09），暂时隐藏并视为关闭；
-    // 枚举与存储保留，便于日后恢复
-    if (cfg.engine == TranslateEngineOption.bing) {
-      return TranslateEngineOption.off;
-    }
     if (cfg.engine == TranslateEngineOption.openai && !openai.isConfigured) {
       // OpenAI 未配置 baseUrl 时视为关闭，避免无意义的请求
       return TranslateEngineOption.off;

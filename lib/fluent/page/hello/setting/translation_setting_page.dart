@@ -3,10 +3,12 @@
  * 配置即改即存（单 JSON key 写入 SharedPreferences）。
  */
 
+import 'package:bot_toast/bot_toast.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
+import 'package:pixez/translation/engine/bing_engine.dart';
 import 'package:pixez/translation/translation_config.dart';
 
 class TranslationSettingPage extends StatefulWidget {
@@ -17,6 +19,7 @@ class TranslationSettingPage extends StatefulWidget {
 }
 
 class _TranslationSettingPageState extends State<TranslationSettingPage> {
+  bool _testingBing = false;
   late TextEditingController _baseUrlController;
   late TextEditingController _apiKeyController;
   late TextEditingController _modelController;
@@ -80,6 +83,44 @@ class _TranslationSettingPageState extends State<TranslationSettingPage> {
     );
     updater(n);
     _updateConfig((c) => c.copyWith(openai: n));
+  }
+
+  Future<void> _testBing(BuildContext context) async {
+    setState(() => _testingBing = true);
+    try {
+      final engine = BingEngine();
+      final results =
+          await engine.translateTexts(['こんにちは'], targetLang: 'zh-Hans');
+      if (results.isNotEmpty && results.first.isNotEmpty) {
+        BotToast.showText(
+            text: 'Bing 机翻连接正常: こんにちは -> ${results.first}');
+      } else {
+        BotToast.showText(text: 'Bing 机翻响应异常，未返回有效结果');
+      }
+    } catch (e) {
+      BotToast.showText(text: 'Bing 机翻连接失败: $e');
+    } finally {
+      if (mounted) setState(() => _testingBing = false);
+    }
+  }
+
+  void _applyAllToBing() {
+    _updateConfig((c) => c.copyWith(
+          byType: {
+            ...c.byType,
+            TranslateContentType.tag:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.bing),
+            TranslateContentType.title:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.bing),
+            TranslateContentType.caption:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.bing),
+            TranslateContentType.comment:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.bing),
+            TranslateContentType.generic:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.bing),
+          },
+        ));
+    BotToast.showText(text: '已将标签、标题、简介、评论、选区设为 Bing 机翻');
   }
 
   @override
@@ -165,7 +206,58 @@ class _TranslationSettingPageState extends State<TranslationSettingPage> {
                 TranslateContentType.generic,
                 i18n.translation_content_generic,
               ),
-              // Bing 机翻暂时隐藏（微软免 Key 通道已不可用）
+              const Divider(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  i18n.translation_engine_bing,
+                  style: FluentTheme.of(context).typography.subtitle,
+                ),
+              ),
+              ListTile(
+                leading: const Icon(FluentIcons.cloud),
+                title: Text(i18n.translation_engine_bing),
+                subtitle: const Text(
+                    '微软 Edge 免费机翻通道（免 Key 开箱即用），支持标签、标题、简介与短文本翻译；自动适配系统代理。'),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    Button(
+                      child: _testingBing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: ProgressRing(strokeWidth: 2),
+                            )
+                          : const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(FluentIcons.network_tower, size: 14),
+                                SizedBox(width: 6),
+                                Text('测试连通性'),
+                              ],
+                            ),
+                      onPressed:
+                          _testingBing ? null : () => _testBing(context),
+                    ),
+                    const SizedBox(width: 12),
+                    Button(
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(FluentIcons.check_mark, size: 14),
+                          SizedBox(width: 6),
+                          Text('一键设为机翻'),
+                        ],
+                      ),
+                      onPressed: _applyAllToBing,
+                    ),
+                  ],
+                ),
+              ),
               const Divider(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -299,11 +391,7 @@ class _TranslationSettingPageState extends State<TranslationSettingPage> {
     TranslateContentType type,
     String label,
   ) {
-    // 存量 Bing 配置归一为"关闭"显示（effectiveEngineFor 已把 bing 视为 off）
-    final raw = _config.byType[type]?.engine ?? TranslateEngineOption.off;
-    final engine = raw == TranslateEngineOption.bing
-        ? TranslateEngineOption.off
-        : raw;
+    final engine = _config.byType[type]?.engine ?? TranslateEngineOption.off;
     return ListTile(
       leading: const Icon(FluentIcons.translate),
       title: Text(label),
@@ -313,6 +401,7 @@ class _TranslationSettingPageState extends State<TranslationSettingPage> {
         items: [
           for (final opt in [
             TranslateEngineOption.off,
+            TranslateEngineOption.bing,
             TranslateEngineOption.openai,
           ])
             ComboBoxItem(child: Text(_engineLabel(opt)), value: opt),

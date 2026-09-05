@@ -1,9 +1,4 @@
-/*
- * 机翻功能纯逻辑测试：配置序列化、文本分段、HTML 结构保持、token 保护。
- */
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pixez/main.dart';
 import 'package:pixez/translation/engine/openai_engine.dart';
 import 'package:pixez/translation/engine/translate_engine.dart';
 import 'package:pixez/translation/translation_cache.dart';
@@ -47,9 +42,9 @@ void main() {
       // OpenAI 未配置 baseUrl 时视为关闭
       expect(cfg.effectiveEngineFor(TranslateContentType.tag),
           TranslateEngineOption.off);
-      // Bing 免费通道已不可用，暂时隐藏并视为关闭
+      // Bing 免费通道生效
       expect(cfg.effectiveEngineFor(TranslateContentType.title),
-          TranslateEngineOption.off);
+          TranslateEngineOption.bing);
       // 配置 baseUrl 后生效
       final cfg2 = cfg.copyWith(
           openai: OpenAiEngineConfig(baseUrl: 'http://127.0.0.1:11434'));
@@ -58,6 +53,8 @@ void main() {
       // 总开关关闭时全部 off
       expect(cfg2.copyWith(masterEnabled: false).effectiveEngineFor(
           TranslateContentType.tag), TranslateEngineOption.off);
+      expect(cfg2.copyWith(masterEnabled: false).effectiveEngineFor(
+          TranslateContentType.title), TranslateEngineOption.off);
     });
   });
 
@@ -201,6 +198,102 @@ void main() {
       expect(restored, '太好了(heart)哎(star1)');
     });
   });
+
+  group('RichText and Multi-paragraph', () {
+    test('纯符号装饰行与纯数字不被误提取为翻译节点', () {
+      final raw = '◆◇◆◇<br />初めまして！<br />----------------<br />123456<br />よろしくお願いします！';
+      final texts = HtmlTextExtractor.extractTexts(raw);
+      expect(texts, ['初めまして！', 'よろしくお願いします！']);
+    });
+
+    test('恢复富文本时保留首尾空白与缩进排版', () {
+      final raw = '　段落一<br />  段落二';
+      final restored = HtmlTextExtractor.restore(raw, ['译文一', '译文二']);
+      expect(restored, '　译文一<br>  译文二');
+    });
+
+    test('HTML 特殊字符在 Text 节点中被安全转义', () {
+      final raw = '<b>テスト</b>';
+      final restored = HtmlTextExtractor.restore(raw, ['1 < 2 & 3 > 0']);
+      expect(restored, '<b>1 &lt; 2 &amp; 3 &gt; 0</b>');
+    });
+
+    test('多段富文本中部分节点缺失时平滑降级保留该节点原文', () {
+      final service = TranslationService.instance;
+      // 准备缓存：只给"段落一"写入译文，"段落二"缺失
+      final key1 = service.keyOfText('段落一', TranslateContentType.caption);
+      if (key1 != null) {
+        service.caches.store.setResult(key1, 'Paragraph 1');
+      }
+      final html = '段落一<br />段落二';
+      final result = service.translatedCaptionHtml(html, TranslateContentType.caption);
+      expect(result, isNotNull);
+      expect(result, contains('Paragraph 1'));
+      expect(result, contains('段落二'));
+    });
+
+    test('作品 137177813 简介多段与链接混合结构的提取与平滑恢复', () {
+      const caption =
+          '&quot;owls have the ability to rotate their heads 270 degrees&quot;<br /><br />'
+          'so you mean to tell me mumei can just do this? 👀<br /><br />'
+          '(idk what tag to put here pertaining to the head twist lmao)<br /><br />'
+          'discord server <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Fdiscord" target="_blank">https://nanotouko.github.io/discord</a><br />'
+          'pixiv <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Fpixiv" target="_blank">https://nanotouko.github.io/pixiv</a><br />'
+          'twitter/x <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Ftwitter" target="_blank">https://nanotouko.github.io/twitter</a><br />'
+          'bluesky <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Fbsky" target="_blank">https://nanotouko.github.io/bsky</a><br />'
+          'deviantart <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Fdeviantart" target="_blank">https://nanotouko.github.io/deviantart</a><br />'
+          'commissions <a href="/jump.php?https%3A%2F%2Fnanotouko.github.io%2Fcommissions" target="_blank">https://nanotouko.github.io/commissions</a>';
+
+      final texts = HtmlTextExtractor.extractTexts(caption);
+      // 9 个文本节点被提取（链接中的纯 URL 被自动忽略，不送机翻）
+      expect(texts.length, 9);
+      expect(texts[0], '"owls have the ability to rotate their heads 270 degrees"');
+      expect(texts[3], 'discord server ');
+      expect(texts[8], 'commissions ');
+
+      // 模拟只翻译了前两段，后面部分暂时未翻译（平滑降级）
+      final service = TranslationService.instance;
+      final key0 = service.keyOfText(texts[0], TranslateContentType.caption);
+      if (key0 != null) {
+        service.caches.store.setResult(key0, '“猫头鹰能旋转头部270度”');
+      }
+      final result = service.translatedCaptionHtml(caption, TranslateContentType.caption);
+      expect(result, isNotNull);
+      expect(result, contains('“猫头鹰能旋转头部270度”'));
+      expect(result, contains('https://nanotouko.github.io/discord'));
+      expect(result, contains('commissions'));
+    });
+
+    test('TranslationQueue 并发在途等待防重', () async {
+      final queue = TranslationQueue.instance;
+      final caches = TranslationCacheStores(
+        disk: _NoopDisk(),
+        memory: TranslationMemoryCache(),
+        store: TranslationStore(),
+      );
+
+      var engineCallCount = 0;
+      final fakeEngine = _FakeDelayedEngine(
+        onTranslate: (texts) async {
+          engineCallCount++;
+          await Future.delayed(const Duration(milliseconds: 50));
+          return texts.map((t) => 'trans_$t').toList();
+        },
+      );
+
+      final item = MapEntry('k1', 'text1');
+      // 同时发起两个并发 enqueue
+      final f1 = queue.enqueue(fakeEngine, caches,
+          items: [item], targetLang: 'zh-CN');
+      final f2 = queue.enqueue(fakeEngine, caches,
+          items: [item], targetLang: 'zh-CN');
+
+      await Future.wait([f1, f2]);
+      // 只有一个真正调用了底层引擎，第二个等待其完成
+      expect(engineCallCount, 1);
+      expect(caches.store.resultOf('k1'), 'trans_text1');
+    });
+  });
 }
 
 class _NoopDisk extends TranslationCacheProvider {
@@ -212,4 +305,21 @@ class _NoopDisk extends TranslationCacheProvider {
 
   @override
   Future<List<TranslationCacheEntry>> getAllNotExpired() async => [];
+}
+
+class _FakeDelayedEngine implements TranslationEngine {
+  final Future<List<String>> Function(List<String> texts) onTranslate;
+
+  _FakeDelayedEngine({required this.onTranslate});
+
+  @override
+  String get id => 'fake';
+
+  @override
+  Future<List<String>> translateTexts(
+    List<String> texts, {
+    required String targetLang,
+    String? sourceLang,
+    String? contextText,
+  }) => onTranslate(texts);
 }

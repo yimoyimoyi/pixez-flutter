@@ -74,6 +74,7 @@ class TranslationQueue {
   /// maxConcurrency=1 时退化为严格串行。
   final ConcurrencyGate _gate = ConcurrencyGate();
   final Set<String> _inflight = {};
+  final Map<String, Completer<void>> _inflightCompleters = {};
   int _writeCount = 0;
 
   /// 最近一次失败的原始错误（供 UI 展示具体失败原因）
@@ -94,13 +95,31 @@ class TranslationQueue {
     String? contextText,
     int maxConcurrency = 1,
   }) async {
-    // 过滤在途 key
-    final pending = items
-        .where((e) => !caches.memory.has(e.key) && !_inflight.contains(e.key))
+    // 收集已在途的异步任务，以便等候其完成
+    final inFlightFutures = items
+        .where((e) => _inflight.contains(e.key))
+        .map((e) => _inflightCompleters[e.key]?.future)
+        .whereType<Future<void>>()
         .toList();
-    if (pending.isEmpty) return;
+
+    // 过滤在途与已完成缓存的 key
+    final pending = items
+        .where((e) =>
+            !caches.memory.has(e.key) &&
+            !caches.store.has(e.key) &&
+            !_inflight.contains(e.key))
+        .toList();
+
+    if (pending.isEmpty) {
+      if (inFlightFutures.isNotEmpty) {
+        await Future.wait(inFlightFutures);
+      }
+      return;
+    }
+
     for (final e in pending) {
       _inflight.add(e.key);
+      _inflightCompleters[e.key] = Completer<void>();
       caches.store.markPending(e.key, true);
     }
 
@@ -112,6 +131,10 @@ class TranslationQueue {
           contextText: contextText);
     } finally {
       _gate.release();
+    }
+
+    if (inFlightFutures.isNotEmpty) {
+      await Future.wait(inFlightFutures);
     }
   }
 
@@ -203,6 +226,10 @@ class TranslationQueue {
     } finally {
       for (final e in items) {
         _inflight.remove(e.key);
+        final c = _inflightCompleters.remove(e.key);
+        if (c != null && !c.isCompleted) {
+          c.complete();
+        }
         caches.store.markPending(e.key, false);
       }
       await Future<void>.delayed(const Duration(milliseconds: 100)); // 批间间隔

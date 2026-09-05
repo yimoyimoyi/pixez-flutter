@@ -57,22 +57,39 @@ class _IllustDetailBodyState extends State<IllustDetailBody> {
 
   Illusts get illust => widget.illust;
 
-  void _toggleTitleTranslated() {
+  Future<void> _toggleTitleTranslated() async {
+    if (_titlePending) return;
     setState(() {
       _titleTranslatedShown = !_titleTranslatedShown;
     });
     if (_titleTranslatedShown) {
-      TranslationService.instance.translateTitle(illust.title);
+      final ok =
+          await TranslationService.instance.translateTitle(illust.title);
+      if (!ok && mounted) _showTranslateFailed();
     }
   }
 
-  void _toggleTagTranslated() {
+  Future<void> _toggleTagTranslated() async {
+    if (_tagsPending) return;
     setState(() {
       _tagTranslatedShown = !_tagTranslatedShown;
     });
     if (_tagTranslatedShown) {
-      TranslationService.instance.translateTags(illust);
+      final ok = await TranslationService.instance.translateTags(illust);
+      if (!ok && mounted) _showTranslateFailed();
     }
+  }
+
+  void _showTranslateFailed() {
+    displayInfoBar(
+      context,
+      builder: (context, VoidCallback) => InfoBar(
+        title: Text(
+          I18n.of(context).translation_failed +
+              TranslationService.instance.describeLastError(),
+        ),
+      ),
+    );
   }
 
   TranslationService get _translationService => TranslationService.instance;

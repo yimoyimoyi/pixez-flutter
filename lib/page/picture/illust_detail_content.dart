@@ -57,6 +57,8 @@ class _IllustDetailContentState extends State<IllustDetailContent> {
   TranslationService get _translationService => TranslationService.instance;
 
   Future<void> _toggleShowTranslated(TranslateContentType type) async {
+    if (type == TranslateContentType.title && _titlePending) return;
+    if (type == TranslateContentType.tag && _tagsPending) return;
     setState(() {
       _showTranslated[type] = !(_showTranslated[type] ?? false);
     });
@@ -87,6 +89,8 @@ class _IllustDetailContentState extends State<IllustDetailContent> {
       _showTranslated[TranslateContentType.title] ?? false;
   bool get _tagTranslatedShown =>
       _showTranslated[TranslateContentType.tag] ?? false;
+  bool get _titlePending =>
+      _translationService.isPendingOf(_illusts.title, TranslateContentType.title);
 
   /// 标签是否存在翻译在途（批量，任一标签在途则按钮转圈）
   bool get _tagsPending {

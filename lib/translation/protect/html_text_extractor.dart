@@ -14,11 +14,16 @@ class HtmlTextExtractor {
   /// 纯 URL / 空白链接占位：不送翻译（模型只会原样返回或改写 URL）
   static final RegExp _urlOnlyRegex = RegExp(r'^https?://\S+$');
 
-  /// 判断文本节点是否值得翻译（非空、非纯 URL）
+  /// 至少包含一个文字字符（Unicode Letter，含汉字、假名、字母等）。
+  /// 纯标点、符号（如 ◆◇---===）、纯数字等装饰行不送翻译，避免模型破坏或误判失败。
+  static final RegExp _hasLetterRegex = RegExp(r'[\p{L}]', unicode: true);
+
+  /// 判断文本节点是否值得翻译（非空、非纯 URL、含有有效文字）
   static bool isTranslatableTextNode(String data) {
     final text = data.trim();
     if (text.isEmpty) return false;
     if (_urlOnlyRegex.hasMatch(text)) return false;
+    if (!_hasLetterRegex.hasMatch(text)) return false;
     return true;
   }
 
@@ -43,7 +48,12 @@ class HtmlTextExtractor {
     for (final node in _walk(body.nodes)) {
       if (node is Text && isTranslatableTextNode(node.data)) {
         if (index < translated.length) {
-          node.data = translated[index];
+          final original = node.data;
+          final trans = translated[index];
+          // 保留原节点首尾的空格/换行/段首缩进排版
+          final leading = RegExp(r'^\s*').firstMatch(original)?.group(0) ?? '';
+          final trailing = RegExp(r'\s*$').firstMatch(original)?.group(0) ?? '';
+          node.data = '$leading$trans$trailing';
           index++;
         }
       }
@@ -53,9 +63,18 @@ class HtmlTextExtractor {
 
   /// Element/Text 直接序列化（html 包中只有 Element 有 outerHtml）
   static String _serialize(Node node) {
-    if (node is Text) return node.data;
+    if (node is Text) return _escapeHtml(node.data);
     if (node is Element) return node.outerHtml;
     return node.text ?? '';
+  }
+
+  static String _escapeHtml(String text) {
+    return text
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
   }
 
   static Iterable<Node> _walk(List<Node> nodes) sync* {

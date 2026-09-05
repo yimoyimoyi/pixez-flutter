@@ -61,7 +61,10 @@ class BingEngine implements TranslationEngine {
         'isEnterpriseClient': false,
       },
       options: Options(
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        },
         validateStatus: (status) =>
             (status != null && status >= 200 && status < 300) ||
             status == 429 ||
@@ -76,7 +79,16 @@ class BingEngine implements TranslationEngine {
   }
 
   List<String> _parseTranslateResponse(Response resp) {
-    final data = resp.data;
+    dynamic data = resp.data;
+    // 微软 Edge 翻译端点返回 Content-Type: text/plain; charset=utf-8，
+    // Dio 不会自动反序列化为 List，此处补充解析容错
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (e) {
+        throw FormatException('failed to decode translate response: $e');
+      }
+    }
     if (data is! List) {
       throw FormatException('unexpected translate response');
     }

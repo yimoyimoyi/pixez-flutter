@@ -36,6 +36,7 @@ import 'package:pixez/page/book/tag/book_tag_page.dart';
 import 'package:pixez/page/hello/recom/recom_manga_page.dart';
 import 'package:pixez/page/hello/setting/data_export_page.dart';
 import 'package:pixez/page/hello/setting/setting_quality_page.dart';
+import 'package:pixez/page/hello/setting/translation_setting_page.dart';
 import 'package:pixez/page/history/history_page.dart';
 import 'package:pixez/page/login/login_page.dart';
 import 'package:pixez/page/novel/history/novel_history_page.dart';
@@ -224,6 +225,14 @@ class _SettingPageState extends State<SettingPage> {
                           return SettingQualityPage();
                         }));
                       },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.translate),
+                      title: Text(I18n.of(context).translation_settings),
+                      onTap: () => Leader.push(
+                        context,
+                        const TranslationSettingPage(),
+                      ),
                     ),
                     ListTile(
                       leading: Icon(Icons.bookmark),

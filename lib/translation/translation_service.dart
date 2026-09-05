@@ -129,14 +129,15 @@ class TranslationService {
   /// 触发翻译一段纯文本（幂等：已有结果/在途直接返回）。
   /// 返回是否已有译文（false = 请求失败/无结果，便于 UI 给出失败提示）。
   Future<bool> translateText(String raw, TranslateContentType type) async {
+    final text = raw.trim();
+    if (text.isEmpty) return true;
     final engine = _engineFor(type);
-    if (engine == null || raw.trim().isEmpty) return true; // 未配置视为无操作
-    final key = translationCacheKey(raw,
+    if (engine == null) return true; // 未配置视为无操作
+    final key = translationCacheKey(text,
         engine: engine.id, targetLang: resolveTargetLang());
     if (caches.store.has(key) || caches.memory.has(key)) return true;
-    if (caches.store.pending.contains(key)) return true; // 在途不算失败
     await TranslationQueue.instance.enqueue(engine, defaultCaches,
-        items: [MapEntry(key, raw)],
+        items: [MapEntry(key, text)],
         targetLang: resolveTargetLang(),
         sourceLang: config.sourceLang,
         maxConcurrency: config.maxConcurrency);
@@ -190,7 +191,9 @@ class TranslationService {
       final t = translatedOf(p, TranslateContentType.novelBody);
       if (t != null) {
         changed = true;
-        return t;
+        final leading = RegExp(r'^\s*').firstMatch(p)?.group(0) ?? '';
+        final trailing = RegExp(r'\s*$').firstMatch(p)?.group(0) ?? '';
+        return '$leading$t$trailing';
       }
       return p;
     }).join('\n');
@@ -254,29 +257,26 @@ class TranslationService {
 
   // ---------- caption / 简介（HTML 结构保持） ----------
 
-  /// caption 译文 HTML：逐文本节点恢复；任一节点无译文时返回 null（显示原文）。
-  /// 判定失败时把全部节点的 has 状态记入 lastError（诊断用），便于定位。
+  /// caption 译文 HTML：逐文本节点恢复；只要至少一个节点有译文即可呈现译文，
+  /// 缺失译文的节点平滑回退该节点自身原文（避免单个专有名词/纯符号未翻致整篇失败）。
   String? translatedCaptionHtml(String rawHtml, TranslateContentType type) {
     final texts = HtmlTextExtractor.extractTexts(rawHtml);
     if (texts.isEmpty) return null;
     final translations = <String>[];
+    var hasAnyTranslation = false;
     for (final text in texts) {
       final key = keyOfText(text, type);
-      if (key == null) return null;
-      final value = caches.store.resultOf(key);
-      if (value == null) {
-        final sb = StringBuffer('caption nodes:');
-        for (final t in texts) {
-          final k = keyOfText(t, type);
-          final has = k != null &&
-              (caches.store.has(k) || caches.memory.has(k));
-          sb.write('\n[$has]${t.length > 36 ? t.substring(0, 33) + '...' : t}');
-        }
-        TranslationQueue.instance.lastError = '$sb';
-        return null;
+      final value = key != null
+          ? (caches.store.resultOf(key) ?? caches.memory.get(key))
+          : null;
+      if (value != null && value.isNotEmpty) {
+        hasAnyTranslation = true;
+        translations.add(value);
+      } else {
+        translations.add(text.trim());
       }
-      translations.add(value);
     }
+    if (!hasAnyTranslation) return null;
     return HtmlTextExtractor.restore(rawHtml, translations);
   }
 

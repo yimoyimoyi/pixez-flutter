@@ -34,6 +34,7 @@ import 'package:pixez/fluent/page/picture/illust_lighting_page.dart';
 import 'package:pixez/fluent/page/picture/picture_list_page.dart';
 import 'package:pixez/fluent/page/picture/tag_for_illust_page.dart';
 import 'package:pixez/page/picture/illust_store.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'context_menu.dart';
 
 class IllustCard extends StatefulWidget {
@@ -367,12 +368,16 @@ class _IllustCardState extends State<IllustCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  store.illusts!.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.clip,
-                  style: FluentTheme.of(context).typography.bodyStrong,
-                  strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
+                Observer(
+                  builder: (_) => Text(
+                    TranslationService.instance.displayTitle(
+                      store.illusts!.title,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: FluentTheme.of(context).typography.bodyStrong,
+                    strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
+                  ),
                 ),
                 Text(
                   store.illusts!.user.name,

@@ -31,6 +31,7 @@ import 'package:pixez/fluent/page/book/tag/book_tag_page.dart';
 import 'package:pixez/fluent/page/hello/recom/recom_manga_page.dart';
 import 'package:pixez/fluent/page/hello/setting/data_export_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_quality_page.dart';
+import 'package:pixez/fluent/page/hello/setting/translation_setting_page.dart';
 import 'package:pixez/fluent/page/history/history_page.dart';
 import 'package:pixez/fluent/page/login/login_page.dart';
 import 'package:pixez/fluent/page/shield/shield_page.dart';
@@ -189,6 +190,19 @@ class _SettingPageState extends State<SettingPage> {
                   SettingQualityPage(),
                   icon: Icon(FluentIcons.settings),
                   title: Text(I18n.of(context).quality_setting),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(FluentIcons.translate),
+              title: Text(I18n.of(context).translation_settings),
+              trailing: const Icon(FluentIcons.chevron_right),
+              onPressed: () {
+                Leader.push(
+                  context,
+                  const TranslationSettingPage(),
+                  icon: const Icon(FluentIcons.translate),
+                  title: Text(I18n.of(context).translation_settings),
                 );
               },
             ),

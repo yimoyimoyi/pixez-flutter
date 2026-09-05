@@ -50,6 +50,7 @@ class SelectableHtml extends StatefulWidget {
 
 class _SelectableHtmlState extends State<SelectableHtml> {
   bool _showTranslated = false;
+  bool _pending = false;
 
   @override
   void initState() {
@@ -59,7 +60,18 @@ class _SelectableHtmlState extends State<SelectableHtml> {
 
   @override
   Widget build(BuildContext context) {
-    final content = Container(
+    if (!_translationEnabled()) return _buildContent(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Observer(builder: (_) => _buildToggle()),
+        Observer(builder: (_) => _buildContent(context)),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    return Container(
       child: HtmlWidget(
         _displayData(),
         customStylesBuilder: (e) {
@@ -91,14 +103,6 @@ class _SelectableHtmlState extends State<SelectableHtml> {
         },
       ),
     );
-    if (!_translationEnabled()) return content;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Observer(builder: (_) => _buildToggle()),
-        content,
-      ],
-    );
   }
 
   bool _translationEnabled() =>
@@ -120,14 +124,15 @@ class _SelectableHtmlState extends State<SelectableHtml> {
       // 该内容类型未开启翻译：不显示按钮
       return const SizedBox.shrink();
     }
-    final pending = service.isPendingCaption(
-      widget.data,
-      widget.translateType!,
-    );
+    final isPending = _pending ||
+        service.isPendingCaption(
+          widget.data,
+          widget.translateType!,
+        );
     return SizedBox(
       height: 32,
       child: TextButton.icon(
-        icon: _showTranslated || pending
+        icon: isPending
             ? const SizedBox(
                 width: 14,
                 height: 14,
@@ -141,19 +146,28 @@ class _SelectableHtmlState extends State<SelectableHtml> {
           style: const TextStyle(fontSize: 13),
         ),
         onPressed: () async {
+          if (_pending) return;
           setState(() {
             _showTranslated = !_showTranslated;
           });
           if (_showTranslated) {
+            setState(() {
+              _pending = true;
+            });
             final ok = await service.translateCaption(
               widget.data,
               widget.translateType!,
             );
-            if (!ok && mounted) {
-              final _reason = TranslationService.instance.describeLastError();
-              BotToast.showText(
-                text: I18n.of(context).translation_failed + _reason,
-              );
+            if (mounted) {
+              setState(() {
+                _pending = false;
+              });
+              if (!ok) {
+                final _reason = TranslationService.instance.describeLastError();
+                BotToast.showText(
+                  text: I18n.of(context).translation_failed + _reason,
+                );
+              }
             }
           }
         },

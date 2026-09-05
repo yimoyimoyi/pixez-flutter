@@ -48,6 +48,7 @@ class SelectableHtml extends StatefulWidget {
 
 class _SelectableHtmlState extends State<SelectableHtml> {
   bool _showTranslated = false;
+  bool _pending = false;
 
   @override
   void initState() {
@@ -57,7 +58,18 @@ class _SelectableHtmlState extends State<SelectableHtml> {
 
   @override
   Widget build(BuildContext context) {
-    final content = Container(
+    if (!_translationEnabled()) return _buildContent(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Observer(builder: (_) => _buildToggle()),
+        Observer(builder: (_) => _buildContent(context)),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    return Container(
       child: HtmlWidget(
         _displayData(),
         customStylesBuilder: (e) {
@@ -86,14 +98,6 @@ class _SelectableHtmlState extends State<SelectableHtml> {
         },
       ),
     );
-    if (!_translationEnabled()) return content;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Observer(builder: (_) => _buildToggle()),
-        content,
-      ],
-    );
   }
 
   bool _translationEnabled() =>
@@ -115,43 +119,64 @@ class _SelectableHtmlState extends State<SelectableHtml> {
       // 该内容类型未开启翻译：不显示按钮
       return const SizedBox.shrink();
     }
-    final pending = service.isPendingCaption(
-      widget.data,
-      widget.translateType!,
-    );
+    final isPending = _pending ||
+        service.isPendingCaption(
+          widget.data,
+          widget.translateType!,
+        );
     return Align(
       alignment: Alignment.centerLeft,
       child: HyperlinkButton(
         onPressed: () async {
+          if (_pending) return;
           setState(() {
             _showTranslated = !_showTranslated;
           });
           if (_showTranslated) {
+            setState(() {
+              _pending = true;
+            });
             final ok = await service.translateCaption(
               widget.data,
               widget.translateType!,
             );
-            if (!ok && mounted) {
-              displayInfoBar(
-                context,
-                builder: (context, VoidCallback) => InfoBar(
-                  title: Text(
-                    I18n.of(context).translation_failed +
-                        TranslationService.instance.describeLastError(),
+            if (mounted) {
+              setState(() {
+                _pending = false;
+              });
+              if (!ok) {
+                displayInfoBar(
+                  context,
+                  builder: (context, VoidCallback) => InfoBar(
+                    title: Text(
+                      I18n.of(context).translation_failed +
+                          TranslationService.instance.describeLastError(),
+                    ),
                   ),
-                ),
-              );
+                );
+              }
             }
           }
         },
-        child: Text(
-          pending
-              ? '...'
-              : (_showTranslated
+        child: isPending
+            ? const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: ProgressRing(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 4),
+                  Text('...'),
+                ],
+              )
+            : Text(
+                _showTranslated
                     ? I18n.of(context).translation_show_original
-                    : I18n.of(context).translate),
-          style: const TextStyle(fontSize: 13),
-        ),
+                    : I18n.of(context).translate,
+                style: const TextStyle(fontSize: 13),
+              ),
       ),
     );
   }
