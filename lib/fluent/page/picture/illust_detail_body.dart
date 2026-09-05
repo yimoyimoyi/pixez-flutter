@@ -27,6 +27,8 @@ import 'package:pixez/models/illust.dart';
 import 'package:pixez/fluent/page/comment/comment_page.dart';
 import 'package:pixez/fluent/page/picture/row_card.dart';
 import 'package:pixez/page/picture/illust_detail_store.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 
 class GestureMe extends GestureRecognizer {
   @override
@@ -39,10 +41,54 @@ class GestureMe extends GestureRecognizer {
   void rejectGesture(int pointer) {}
 }
 
-class IllustDetailBody extends StatelessWidget {
+class IllustDetailBody extends StatefulWidget {
   final Illusts illust;
 
-  IllustDetailBody({Key? key, required this.illust}) : super(key: key);
+  const IllustDetailBody({Key? key, required this.illust}) : super(key: key);
+
+  @override
+  State<IllustDetailBody> createState() => _IllustDetailBodyState();
+}
+
+class _IllustDetailBodyState extends State<IllustDetailBody> {
+  /// 标题/标签"显示译文"开关（手动触发语义）
+  bool _titleTranslatedShown = false;
+  bool _tagTranslatedShown = false;
+
+  Illusts get illust => widget.illust;
+
+  void _toggleTitleTranslated() {
+    setState(() {
+      _titleTranslatedShown = !_titleTranslatedShown;
+    });
+    if (_titleTranslatedShown) {
+      TranslationService.instance.translateTitle(illust.title);
+    }
+  }
+
+  void _toggleTagTranslated() {
+    setState(() {
+      _tagTranslatedShown = !_tagTranslatedShown;
+    });
+    if (_tagTranslatedShown) {
+      TranslationService.instance.translateTags(illust);
+    }
+  }
+
+  TranslationService get _translationService => TranslationService.instance;
+
+  bool get _titlePending =>
+      _translationService.isPendingOf(illust.title, TranslateContentType.title);
+
+  bool get _tagsPending {
+    final pending = _translationService.caches.store.pending;
+    for (final tag in illust.tags) {
+      if (tag.translatedName != null && tag.translatedName!.isNotEmpty) continue;
+      final key = _translationService.tagKey(tag.name);
+      if (key != null && pending.contains(key)) return true;
+    }
+    return false;
+  }
 
   Widget colorText(String text, BuildContext context) => Text(
         text,
@@ -93,10 +139,36 @@ class IllustDetailBody extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: <Widget>[
-                  Text(
-                    illust.title,
-                    style:
-                        TextStyle(color: FluentTheme.of(context).accentColor),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _titleTranslatedShown
+                              ? (_translationService.translatedOf(
+                                          illust.title,
+                                          TranslateContentType.title) ??
+                                  illust.title)
+                              : illust.title,
+                          style: TextStyle(
+                              color: FluentTheme.of(context).accentColor),
+                        ),
+                      ),
+                      if (_translationService
+                          .isTypeEnabled(TranslateContentType.title))
+                        HyperlinkButton(
+                          onPressed: _toggleTitleTranslated,
+                          child: Text(
+                            _titlePending
+                                ? '...'
+                                : (_titleTranslatedShown
+                                    ? I18n.of(context).translation_show_original
+                                    : I18n.of(context).translate),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                    ],
                   ),
                   Container(
                     height: 4.0,
@@ -203,7 +275,21 @@ class IllustDetailBody extends StatelessWidget {
                               .caption!
                               .copyWith(
                                   color: FluentTheme.of(context).accentColor)),
-                    for (var f in illust.tags) buildRow(context, f)
+                    if (_translationService
+                        .isTypeEnabled(TranslateContentType.tag))
+                      HyperlinkButton(
+                        onPressed: _toggleTagTranslated,
+                        child: Text(
+                          _tagsPending
+                              ? '...'
+                              : (_tagTranslatedShown
+                                  ? I18n.of(context).translation_show_original
+                                  : I18n.of(context).translate),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    for (var f in illust.tags)
+                      buildRow(context, f, _tagTranslatedShown)
                   ],
                 ),
               ),
@@ -212,6 +298,8 @@ class IllustDetailBody extends StatelessWidget {
                   padding: const EdgeInsets.all(8.0),
                   child: SelectableHtml(
                     data: illust.caption.isEmpty ? "~" : illust.caption,
+                    translateType: TranslateContentType.caption,
+                    translateId: 'illust:${illust.id}',
                   ),
                 ),
               ),
@@ -240,7 +328,7 @@ class IllustDetailBody extends StatelessWidget {
     );
   }
 
-  Widget buildRow(BuildContext context, Tags f) {
-    return RowCard(f);
+  Widget buildRow(BuildContext context, Tags f, bool showTranslated) {
+    return RowCard(f, showTranslated: showTranslated);
   }
 }

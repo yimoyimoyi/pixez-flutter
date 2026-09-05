@@ -17,23 +17,38 @@
 import 'dart:io';
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
+import 'package:pixez/i18n.dart';
 import 'package:pixez/supportor_plugin.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 
 class SelectableHtml extends StatefulWidget {
   final String data;
 
-  const SelectableHtml({Key? key, required this.data}) : super(key: key);
+  /// 传入则启用"翻译/原文"切换（机翻 AI 翻译），null 保持老行为
+  final TranslateContentType? translateType;
+  final String? translateId;
+
+  const SelectableHtml({
+    Key? key,
+    required this.data,
+    this.translateType,
+    this.translateId,
+  }) : super(key: key);
 
   @override
   _SelectableHtmlState createState() => _SelectableHtmlState();
 }
 
 class _SelectableHtmlState extends State<SelectableHtml> {
+  bool _showTranslated = false;
+
   @override
   void initState() {
     super.initState();
@@ -42,14 +57,14 @@ class _SelectableHtmlState extends State<SelectableHtml> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final content = Container(
       child: HtmlWidget(
-        widget.data,
+        _displayData(),
         customStylesBuilder: (e) {
           if (e.attributes.containsKey('href')) {
             final color = FluentTheme.of(context).accentColor;
             return {
-              'color': '#${color.colorValue.toRadixString(16).substring(2, 8)}'
+              'color': '#${color.colorValue.toRadixString(16).substring(2, 8)}',
             };
           }
           return null;
@@ -60,13 +75,83 @@ class _SelectableHtmlState extends State<SelectableHtml> {
             if (url.startsWith("pixiv")) {
               Leader.pushWithUri(context, Uri.parse(url));
             } else
-              await launchUrl(Uri.parse(url),
-                  mode: LaunchMode.externalNonBrowserApplication);
+              await launchUrl(
+                Uri.parse(url),
+                mode: LaunchMode.externalNonBrowserApplication,
+              );
           } catch (e) {
             SharePlus.instance.share(ShareParams(text: url));
           }
           return true;
         },
+      ),
+    );
+    if (!_translationEnabled()) return content;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Observer(builder: (_) => _buildToggle()),
+        content,
+      ],
+    );
+  }
+
+  bool _translationEnabled() =>
+      widget.translateType != null && widget.translateId != null;
+
+  /// 显示内容：译文(全节点翻译完成) / 原文，Observer 追踪译文就绪后自动重建
+  String _displayData() {
+    if (!_translationEnabled() || !_showTranslated) return widget.data;
+    return TranslationService.instance.translatedCaptionHtml(
+          widget.data,
+          widget.translateType!,
+        ) ??
+        widget.data;
+  }
+
+  Widget _buildToggle() {
+    final service = TranslationService.instance;
+    if (!service.isTypeEnabled(widget.translateType!)) {
+      // 该内容类型未开启翻译：不显示按钮
+      return const SizedBox.shrink();
+    }
+    final pending = service.isPendingCaption(
+      widget.data,
+      widget.translateType!,
+    );
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: HyperlinkButton(
+        onPressed: () async {
+          setState(() {
+            _showTranslated = !_showTranslated;
+          });
+          if (_showTranslated) {
+            final ok = await service.translateCaption(
+              widget.data,
+              widget.translateType!,
+            );
+            if (!ok && mounted) {
+              displayInfoBar(
+                context,
+                builder: (context, VoidCallback) => InfoBar(
+                  title: Text(
+                    I18n.of(context).translation_failed +
+                        TranslationService.instance.describeLastError(),
+                  ),
+                ),
+              );
+            }
+          }
+        },
+        child: Text(
+          pending
+              ? '...'
+              : (_showTranslated
+                    ? I18n.of(context).translation_show_original
+                    : I18n.of(context).translate),
+          style: const TextStyle(fontSize: 13),
+        ),
       ),
     );
   }

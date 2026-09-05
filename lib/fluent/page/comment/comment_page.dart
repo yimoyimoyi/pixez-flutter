@@ -20,6 +20,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/comment_emoji_text.dart';
 import 'package:pixez/component/pixez_default_header.dart';
+import 'package:pixez/translation/translation_config.dart';
 import 'package:pixez/fluent/component/painter_avatar.dart';
 import 'package:pixez/fluent/component/pixiv_image.dart';
 import 'package:pixez/er/leader.dart';
@@ -247,6 +248,8 @@ class _CommentPageState extends State<CommentPage> {
                                                   right: 4.0),
                                               child: CommentEmojiText(
                                                 text: comment.comment ?? "",
+                                                translateType:
+                                                    TranslateContentType.comment,
                                               ),
                                             ),
                                           if (comment.stamp != null)

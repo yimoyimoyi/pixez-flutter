@@ -26,6 +26,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/selectable_html.dart';
+import 'package:pixez/component/selection_tools.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/exts.dart';
@@ -41,6 +42,9 @@ import 'package:pixez/page/novel/series/novel_series_page.dart';
 import 'package:pixez/page/novel/user/novel_users_page.dart';
 import 'package:pixez/page/novel/viewer/image_text.dart';
 import 'package:pixez/page/novel/viewer/novel_store.dart';
+import 'package:pixez/page/hello/setting/translation_setting_page.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/saf_plugin.dart';
 import 'package:pixez/supportor_plugin.dart';
 import 'package:share_plus/share_plus.dart';
@@ -94,6 +98,7 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
     if (_novelStore.positionBooked) {
       _novelStore.bookPosition(_localOffset);
     }
+    _novelStore.cancelTranslateFullText(); // 离开阅读页取消后续批次（在途批完成写缓存可复用）
     _controller?.dispose();
     super.dispose();
   }
@@ -265,14 +270,18 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
         contextMenuBuilder: (context, editableTextState) {
           return _buildSelectionMenu(editableTextState, context);
         },
-        child: Text.rich(
-          novelSpansGenerator.novelSpansDatatoInlineSpan(
-            context,
-            spanDatas[index],
-          ),
-          style: _textStyle,
-          textHeightBehavior: TextHeightBehavior(
-            applyHeightToLastDescent: true,
+        // span 级 Observer：译文到达（store.translated 变更）只重建对应 span，
+        // 滚动位置不受影响；页面级 Observer 不读翻译 observable
+        child: Observer(
+          builder: (_) => Text.rich(
+            novelSpansGenerator.novelSpansDatatoInlineSpan(
+              context,
+              spanDatas[index],
+            ),
+            style: _textStyle,
+            textHeightBehavior: TextHeightBehavior(
+              applyHeightToLastDescent: true,
+            ),
           ),
         ),
       ),
@@ -422,6 +431,8 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
   ) {
     final List<ContextMenuButtonItem> buttonItems =
         editableTextState.contextMenuButtonItems;
+    // 应用内翻译（通用类型；未开启配置时不插入）
+    addTranslateMenuItem(buttonItems, context: context, selectionText: _selectedText);
     if (supportTranslate) {
       buttonItems.insert(
         buttonItems.length,
@@ -490,6 +501,9 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
                       ),
                     ],
                   ),
+                  const Divider(),
+                  // 全文翻译（novelBody）：进度/取消/预估
+                  _buildNovelTranslateSection(context),
                 ],
               ),
             );
@@ -498,6 +512,127 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
       },
     );
     userSetting.setNovelFontsize(_textStyle!.fontSize!);
+  }
+
+  /// 全文翻译区块：未开启 → 引导；未开始 → 按钮+预估；翻译中 → 进度+取消
+  Widget _buildNovelTranslateSection(BuildContext context) {
+    final service = TranslationService.instance;
+    const type = TranslateContentType.novelBody;
+    if (!service.isTypeEnabled(type)) {
+      return Center(
+        child: TextButton.icon(
+          icon: const Icon(Icons.translate, size: 18),
+          label: Text(I18n.of(context).translation_novel_not_enabled),
+          onPressed: () => Leader.push(context, const TranslationSettingPage()),
+        ),
+      );
+    }
+    return Observer(
+      builder: (_) {
+        final store = _novelStore;
+        final total = store.novelTotalSpans;
+        final done = store.novelTranslatedSpans;
+        final cfg = service.config;
+        if (!store.novelTranslating) {
+          // 未开始/已结束：预估（按当前 spans 统计）
+          final stats = novelTranslatableStats(store.spans);
+          final batches = stats.charsCount == 0
+              ? 0
+              : (stats.charsCount + cfg.novelBatchChars - 1) ~/ cfg.novelBatchChars;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    stats.parasCount == 0
+                        ? I18n.of(context).translation_no_novel_content
+                        : I18n.of(context).translation_novel_estimate(
+                            stats.parasCount, batches, batches * 6),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (store.novelTranslateDone && total > 0 && done >= total)
+                  if (store.novelFailedSpans > 0)
+                    // 有失败段：显示失败数 + 具体原因 + 重试按钮（成功段缓存 miss 秒过）
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          I18n.of(context)
+                              .translation_novel_failed(store.novelFailedSpans),
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error),
+                        ),
+                        Text(
+                          TranslationService.instance.describeLastError(),
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(context).colorScheme.error),
+                        ),
+                        TextButton.icon(
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: Text(
+                              I18n.of(context).translation_retry_failed),
+                          onPressed: () => store.translateFullText(),
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      I18n.of(context).translation_novel_done,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary),
+                    )
+                else
+                  FilledButton.icon(
+                    icon: const Icon(Icons.translate, size: 18),
+                    label: Text(I18n.of(context).translation_full_novel),
+                    onPressed: () => store.translateFullText(),
+                  ),
+              ],
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(
+                value: total == 0 ? 0 : done / total,
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('$done / $total · '
+                        '${I18n.of(context).translation_novel_batch_estimate(
+                            total == 0 ? 0 : (store.novelTotalChars == 0
+                                ? 0
+                                : (store.novelTotalChars + cfg.novelBatchChars - 1) ~/ cfg.novelBatchChars),
+                            _novelTranslateMinutes(done, total))}',
+                        style: const TextStyle(fontSize: 13)),
+                  ),
+                  TextButton(
+                    onPressed: () => store.cancelTranslateFullText(),
+                    child: Text(I18n.of(context).cancel),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 按已处理段落占比估算剩余分钟（每分钟 10 批 × 6s）
+  int _novelTranslateMinutes(int done, int total) {
+    if (total <= 0) return 0;
+    final ratio = (total - done) / total;
+    return (ratio * 8).ceil(); // 粗略：每 8 批约 1 分钟
   }
 
   Future _longPressTag(BuildContext context, Tag f) async {
@@ -664,6 +799,14 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
                     _export();
                   },
                 ),
+              ListTile(
+                title: Text(I18n.of(context).translation_full_novel),
+                leading: const Icon(Icons.translate),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showSettings(context);
+                },
+              ),
               ListTile(
                 title: Text(I18n.of(context).setting),
                 leading: Icon(Icons.settings),

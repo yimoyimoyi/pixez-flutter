@@ -18,6 +18,7 @@
 import 'package:dio/dio.dart';
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:mobx/mobx.dart';
+import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/models/comment_response.dart';
 import 'package:pixez/network/api_client.dart';
 import 'package:pixez/page/comment/comment_page.dart';
@@ -103,9 +104,22 @@ abstract class _CommentStoreBase with Store {
       isEmpty = comments.isEmpty;
       _controller.finishRefresh(IndicatorResult.success);
     } catch (e) {
-      errorMessage = e.toString();
+      errorMessage = _describeError(e);
       _controller.finishRefresh(IndicatorResult.fail);
     }
+  }
+
+  /// 展开 DioException 细节（type/statusCode/底层 error），便于定位真因
+  String _describeError(Object e) {
+    if (e is DioException) {
+      LPrinter.d('comment fetch dio: type=${e.type} '
+          'status=${e.response?.statusCode} '
+          'request=${e.requestOptions.path} '
+          'error=${e.error} message=${e.message}');
+      final status = e.response?.statusCode;
+      return '${e.type}${status != null ? ' [HTTP $status]' : ''}: ${e.error}';
+    }
+    return e.toString();
   }
 
   @action

@@ -28,6 +28,8 @@ import 'package:pixez/fluent/page/picture/ugoira_loader.dart';
 import 'package:pixez/fluent/page/user/users_page.dart';
 import 'package:pixez/fluent/page/zoom/photo_zoom_page.dart';
 import 'package:pixez/page/picture/illust_about_store.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/page/picture/illust_store.dart';
 import 'package:pixez/page/user/user_store.dart';
 import 'package:pixez/utils/haptic_util.dart';
@@ -63,6 +65,66 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
   );
   final ScrollController scrollController = ScrollController();
   bool tempView = false;
+
+  /// 标题/标签"显示译文"开关（手动触发语义）
+  bool _titleTranslatedShown = false;
+  bool _tagTranslatedShown = false;
+
+  TranslationService get _translationService => TranslationService.instance;
+
+  bool get _titlePending => _translationService.isPendingOf(
+    illustStore.illusts?.title ?? '',
+    TranslateContentType.title,
+  );
+
+  bool get _tagsPending {
+    final pending = _translationService.caches.store.pending;
+    final tags = illustStore.illusts?.tags ?? [];
+    for (final tag in tags) {
+      if (tag.translatedName != null && tag.translatedName!.isNotEmpty)
+        continue;
+      final key = _translationService.tagKey(tag.name);
+      if (key != null && pending.contains(key)) return true;
+    }
+    return false;
+  }
+
+  Future<void> _toggleTitleTranslated() async {
+    setState(() {
+      _titleTranslatedShown = !_titleTranslatedShown;
+    });
+    if (_titleTranslatedShown) {
+      final ok = await _translationService.translateTitle(
+        illustStore.illusts?.title ?? '',
+      );
+      if (!ok && mounted) _showTranslateFailed();
+    }
+  }
+
+  Future<void> _toggleTagTranslated() async {
+    setState(() {
+      _tagTranslatedShown = !_tagTranslatedShown;
+    });
+    if (_tagTranslatedShown) {
+      final illust = illustStore.illusts;
+      final ok = illust != null
+          ? await _translationService.translateTags(illust)
+          : true;
+      if (!ok && mounted) _showTranslateFailed();
+    }
+  }
+
+  void _showTranslateFailed() {
+    displayInfoBar(
+      context,
+      builder: (context, VoidCallback) => InfoBar(
+        title: Text(
+          I18n.of(context).translation_failed +
+              TranslationService.instance.describeLastError(),
+        ),
+      ),
+    );
+  }
 
   // 详情页专用协调器：忽略全局暂停（详情大图在暂停期间仍须加载），
   // 并限制详情页自身大图的并发，避免多图滚动时 N 张原图同时下载
@@ -474,8 +536,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
           );
   }
 
-  Widget buildRow(BuildContext context, Tags f) {
-    return RowCard(f);
+  Widget buildRow(BuildContext context, Tags f, bool showTranslated) {
+    return RowCard(f, showTranslated: showTranslated);
   }
 
   Widget buildNameAvatar(BuildContext context, Illusts illust) {
@@ -551,11 +613,41 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.start,
                     children: <Widget>[
-                      Text(
-                        illust.title,
-                        style: TextStyle(
-                          color: FluentTheme.of(context).accentColor,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _titleTranslatedShown
+                                  ? (_translationService.translatedOf(
+                                          illust.title,
+                                          TranslateContentType.title,
+                                        ) ??
+                                        illust.title)
+                                  : illust.title,
+                              style: TextStyle(
+                                color: FluentTheme.of(context).accentColor,
+                              ),
+                            ),
+                          ),
+                          if (_translationService.isTypeEnabled(
+                            TranslateContentType.title,
+                          ))
+                            HyperlinkButton(
+                              onPressed: _toggleTitleTranslated,
+                              child: Text(
+                                _titlePending
+                                    ? '...'
+                                    : (_titleTranslatedShown
+                                          ? I18n.of(
+                                              context,
+                                            ).translation_show_original
+                                          : I18n.of(context).translate),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                        ],
                       ),
                       Container(height: 4.0),
                       Hero(
@@ -794,7 +886,20 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
                     color: FluentTheme.of(context).accentColor,
                   ),
                 ),
-              for (var f in data.tags) buildRow(context, f),
+              if (_translationService.isTypeEnabled(TranslateContentType.tag))
+                HyperlinkButton(
+                  onPressed: _toggleTagTranslated,
+                  child: Text(
+                    _tagsPending
+                        ? '...'
+                        : (_tagTranslatedShown
+                              ? I18n.of(context).translation_show_original
+                              : I18n.of(context).translate),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              for (var f in data.tags)
+                buildRow(context, f, _tagTranslatedShown),
             ],
           ),
         ),
@@ -806,6 +911,8 @@ abstract class IllustItemsPageState extends State<IllustItemsPage>
               padding: const EdgeInsets.all(8.0),
               child: SelectableHtml(
                 data: data.caption.isEmpty ? "~" : data.caption,
+                translateType: TranslateContentType.caption,
+                translateId: 'illust:${data.id}',
               ),
             ),
           ),

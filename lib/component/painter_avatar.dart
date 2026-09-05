@@ -30,9 +30,13 @@ class PainterAvatar extends StatefulWidget {
   final GestureTapCallback? onTap;
   final Size? size;
 
-  const PainterAvatar(
-      {Key? key, required this.url, required this.id, this.onTap, this.size})
-      : super(key: key);
+  const PainterAvatar({
+    Key? key,
+    required this.url,
+    required this.id,
+    this.onTap,
+    this.size,
+  }) : super(key: key);
 
   @override
   _PainterAvatarState createState() => _PainterAvatarState();
@@ -42,10 +46,13 @@ class _PainterAvatarState extends State<PainterAvatar> {
   Uint8List? _cachedBytes;
 
   void pushToUserPage() {
-    Navigator.of(context, rootNavigator: true)
-        .push(MaterialPageRoute(builder: (_) {
-      return UsersPage(id: widget.id);
-    }));
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) {
+          return UsersPage(id: widget.id);
+        },
+      ),
+    );
   }
 
   /// 方案 B: 网络失败后依次尝试本地缓存 → 直接下载
@@ -67,10 +74,12 @@ class _PainterAvatarState extends State<PainterAvatar> {
         }
       }
       // 2) 缓存未命中，直接 Dio 下载
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 15),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      );
       final resp = await dio.get<List<int>>(
         sourceUrl,
         options: Options(
@@ -87,10 +96,14 @@ class _PainterAvatarState extends State<PainterAvatar> {
   Widget? _buildCachedAvatar(double size) {
     if (_cachedBytes != null) {
       return Container(
-        width: size, height: size,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          image: DecorationImage(image: MemoryImage(_cachedBytes!), fit: BoxFit.cover),
+          image: DecorationImage(
+            image: MemoryImage(_cachedBytes!),
+            fit: BoxFit.cover,
+          ),
         ),
       );
     }
@@ -105,90 +118,101 @@ class _PainterAvatarState extends State<PainterAvatar> {
     if (cachedWidget != null) {
       return GestureDetector(
         onTap: () {
-          if (widget.onTap == null) pushToUserPage();
-          else widget.onTap!();
+          if (widget.onTap == null)
+            pushToUserPage();
+          else
+            widget.onTap!();
         },
         child: cachedWidget,
       );
     }
 
     return GestureDetector(
-        onTap: () {
-          if (widget.onTap == null) {
-            pushToUserPage();
-          } else
-            widget.onTap!();
-        },
-        child: widget.size == null
-            ? CachedNetworkImage(
-                imageUrl: widget.url,
-                fadeInDuration: const Duration(milliseconds: 350),
-                fadeInCurve: Curves.easeOut,
-                fadeOutDuration: const Duration(milliseconds: 350),
-                imageBuilder: (context, imageProvider) => Container(
+      onTap: () {
+        if (widget.onTap == null) {
+          pushToUserPage();
+        } else
+          widget.onTap!();
+      },
+      child: widget.size == null
+          ? CachedNetworkImage(
+              imageUrl: widget.url,
+              fadeInDuration: const Duration(milliseconds: 350),
+              fadeInCurve: Curves.easeOut,
+              fadeOutDuration: const Duration(milliseconds: 350),
+              imageBuilder: (context, imageProvider) => Container(
+                width: 60.0,
+                height: 60.0,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  image: DecorationImage(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+              placeholder: (context, url) => Container(
+                width: 60.0,
+                height: 60.0,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Theme.of(context).cardColor,
+                ),
+              ),
+              httpHeaders: Hoster.header(url: widget.url),
+              cacheManager: pixivCacheManager,
+              errorWidget: (context, url, error) {
+                _tryLoadFallback(); // 方案 B: 网络失败→缓存→直接下载
+                return Container(
                   width: 60.0,
                   height: 60.0,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    image: DecorationImage(
-                        image: imageProvider, fit: BoxFit.cover),
+                    color: Theme.of(context).cardColor,
                   ),
-                ),
-                placeholder: (context, url) => Container(
-                  width: 60.0,
-                  height: 60.0,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).cardColor),
-                ),
-                httpHeaders: Hoster.header(url: widget.url),
-                cacheManager: pixivCacheManager,
-                errorWidget: (context, url, error) {
-                  _tryLoadFallback(); // 方案 B: 网络失败→缓存→直接下载
-                  return Container(
-                    width: 60.0,
-                    height: 60.0,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Theme.of(context).cardColor),
-                  );
-                },
-              )
-            : CachedNetworkImage(
-                imageUrl: widget.url,
-                fadeInDuration: const Duration(milliseconds: 350),
-                fadeInCurve: Curves.easeOut,
-                fadeOutDuration: const Duration(milliseconds: 350),
-                cacheManager: pixivCacheManager,
-                placeholder: (context, url) => Container(
-                  width: widget.size!.width,
-                  height: widget.size!.height,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).cardColor),
-                ),
-                errorWidget: (context, url, error) {
-                  _tryLoadFallback(); // 方案 B
-                  return Container(
-                    width: widget.size!.width,
-                    height: widget.size!.height,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Theme.of(context).cardColor),
-                  );
-                },
-                imageBuilder: (context, imageProvider) => Container(
-                  width: widget.size!.width,
-                  height: widget.size!.height,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    image: DecorationImage(
-                        image: imageProvider, fit: BoxFit.cover),
-                  ),
-                ),
+                );
+              },
+            )
+          : CachedNetworkImage(
+              imageUrl: widget.url,
+              fadeInDuration: const Duration(milliseconds: 350),
+              fadeInCurve: Curves.easeOut,
+              fadeOutDuration: const Duration(milliseconds: 350),
+              cacheManager: pixivCacheManager,
+              placeholder: (context, url) => Container(
                 width: widget.size!.width,
                 height: widget.size!.height,
-                httpHeaders: Hoster.header(url: widget.url),
-              ));
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Theme.of(context).cardColor,
+                ),
+              ),
+              errorWidget: (context, url, error) {
+                _tryLoadFallback(); // 方案 B
+                return Container(
+                  width: widget.size!.width,
+                  height: widget.size!.height,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Theme.of(context).cardColor,
+                  ),
+                );
+              },
+              imageBuilder: (context, imageProvider) => Container(
+                width: widget.size!.width,
+                height: widget.size!.height,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  image: DecorationImage(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+              width: widget.size!.width,
+              height: widget.size!.height,
+              httpHeaders: Hoster.header(url: widget.url),
+            ),
+    );
   }
 }

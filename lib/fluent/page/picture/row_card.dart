@@ -8,13 +8,22 @@ import 'package:pixez/main.dart';
 import 'package:pixez/models/ban_tag.dart';
 import 'package:pixez/models/illust.dart';
 import 'package:pixez/fluent/page/search/result_page.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 
 class RowCard extends StatelessWidget {
   final Tags f;
-  RowCard(this.f);
+
+  /// true 时显示机翻译文（详情页标签翻译开关）；false 保持只显示官方译名/原文
+  final bool showTranslated;
+  RowCard(this.f, {this.showTranslated = false});
 
   @override
   Widget build(BuildContext context) {
+    final translatedName = f.translatedName ??
+        (showTranslated
+            ? TranslationService.instance.translatedOf(f.name, TranslateContentType.tag)
+            : null);
     return ContextMenu(
       child: FocusWrap(
         child: GestureDetector(
@@ -28,7 +37,7 @@ class RowCard extends StatelessWidget {
                       style: FluentTheme.of(context).typography.caption,
                     ),
                     TextSpan(
-                        text: "${f.translatedName ?? "~"}",
+                        text: translatedName ?? "~",
                         style: FluentTheme.of(context).typography.caption)
                   ],
                   style: FluentTheme.of(context)

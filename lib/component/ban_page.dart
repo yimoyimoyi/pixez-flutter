@@ -23,7 +23,7 @@ class BanPage extends StatefulWidget {
   final VoidCallback? onPressed;
 
   const BanPage({Key? key, required this.name, this.onPressed})
-      : super(key: key);
+    : super(key: key);
 
   @override
   _BanPageState createState() => _BanPageState();
@@ -33,10 +33,7 @@ class _BanPageState extends State<BanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0.0,
-      ),
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0.0),
       extendBody: true,
       extendBodyBehindAppBar: true,
       body: Center(
@@ -44,40 +41,40 @@ class _BanPageState extends State<BanPage> {
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.all(8.0),
-              child: Text(
-                'X_X',
-                style: TextStyle(fontSize: 26),
-              ),
+              child: Text('X_X', style: TextStyle(fontSize: 26)),
             ),
             Text(
               I18n.of(context).shield_message(widget.name),
               textAlign: TextAlign.center,
             ),
             Padding(
-              padding: const EdgeInsets.only(
-                top: 8.0,
-              ),
+              padding: const EdgeInsets.only(top: 8.0),
               child: MaterialButton(
                 color: Theme.of(context).colorScheme.primary,
                 textColor: Colors.white,
                 child: Text(I18n.of(context).shielding_settings),
                 onPressed: () {
-                  Navigator.of(context).push(MaterialPageRoute(
-                      builder: (BuildContext context) => ShieldPage()));
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (BuildContext context) => ShieldPage(),
+                    ),
+                  );
                 },
               ),
             ),
             Theme(
               data: Theme.of(context).copyWith(
-                  colorScheme: Theme.of(context)
-                      .colorScheme
-                      .copyWith(primary: Theme.of(context).colorScheme.primary)),
+                colorScheme: Theme.of(context).colorScheme.copyWith(
+                  primary: Theme.of(context).colorScheme.primary,
+                ),
+              ),
               child: TextButton(
-                  onPressed: () {
-                    if (widget.onPressed != null) widget.onPressed!();
-                  },
-                  child: Text(I18n.of(context).temporarily_visible)),
-            )
+                onPressed: () {
+                  if (widget.onPressed != null) widget.onPressed!();
+                },
+                child: Text(I18n.of(context).temporarily_visible),
+              ),
+            ),
           ],
           crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisAlignment: MainAxisAlignment.center,

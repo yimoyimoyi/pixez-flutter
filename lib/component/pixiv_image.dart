@@ -65,6 +65,7 @@ class PixivImage extends StatefulWidget {
   final String? errorHint; // 加载失败时显示的元信息（如标题/页码）
   /// 瀑布流中的位置索引（可为 null 表示不参与优先级协调）
   final int? priorityIndex;
+
   /// 按显示宽度解码（如详情页大图按屏宽 × dpr 限制），
   /// 减小解码内存与 ImageCache 占用；null 表示按原始尺寸解码
   final int? memCacheWidth;
@@ -105,10 +106,12 @@ class PixivImage extends StatefulWidget {
       } catch (_) {}
       return;
     }
-    final dio = Dio(BaseOptions(
-      connectTimeout: Duration(seconds: 15),
-      receiveTimeout: Duration(seconds: 30),
-    ));
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: Duration(seconds: 15),
+        receiveTimeout: Duration(seconds: 30),
+      ),
+    );
     dio.interceptors.add(
       PixivImageSourceInterceptor(
         networkMode: () => userSetting.networkMode,
@@ -118,12 +121,14 @@ class PixivImage extends StatefulWidget {
     dio.httpClientAdapter = ConversionLayerAdapter(client);
     _cacheDio = dio;
     // 自定义缓存：500 对象上限，避免浏览长列表时频繁驱逐
-    pixivCacheManager = CacheManager(Config(
-      'dioCache',
-      fileService: DioHttpFileService(dio),
-      maxNrOfCacheObjects: 500,
-      stalePeriod: Duration(days: 30),
-    ));
+    pixivCacheManager = CacheManager(
+      Config(
+        'dioCache',
+        fileService: DioHttpFileService(dio),
+        maxNrOfCacheObjects: 500,
+        stalePeriod: Duration(days: 30),
+      ),
+    );
     // 预热 Worker：fire-and-forget 减少首图冷启动延迟
     _warmUpWorker(dio);
   }
@@ -270,7 +275,8 @@ class _PixivImageState extends State<PixivImage> {
         _coordinator.cancel(oldWidget.url);
       }
       _retryCount = 0;
-      _cachedBytes = null;      _imageShown = false;
+      _cachedBytes = null;
+      _imageShown = false;
       _slotReleased = false;
       _slotTimeoutCount = 0;
       setState(() {
@@ -315,7 +321,8 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes == null &&
             !_imageShown) {
           setState(() {
-            _cachedBytes = Uint8List.fromList(bytes);          });
+            _cachedBytes = Uint8List.fromList(bytes);
+          });
         }
       }
     } catch (_) {
@@ -345,7 +352,8 @@ class _PixivImageState extends State<PixivImage> {
             _cachedBytes == null &&
             !_imageShown) {
           setState(() {
-            _cachedBytes = bytes;          });
+            _cachedBytes = bytes;
+          });
           return;
         }
       }
@@ -361,8 +369,10 @@ class _PixivImageState extends State<PixivImage> {
   /// [checkUrl] 为发起下载时的原始 URL（非 resolvedUrl），用于代际校验：
   /// 下载期间列表快速滑动复用卡片（url 已变化）时，禁止把上一张卡的
   /// 字节填入当前 State，否则会显示错误图片
-  Future<void> _directDownload(String downloadUrl,
-      {required String checkUrl}) async {
+  Future<void> _directDownload(
+    String downloadUrl, {
+    required String checkUrl,
+  }) async {
     try {
       final dio = await _getImageDio();
       final resp = await dio.get<List<int>>(
@@ -378,7 +388,8 @@ class _PixivImageState extends State<PixivImage> {
           mounted &&
           url == checkUrl) {
         setState(() {
-          _cachedBytes = Uint8List.fromList(resp.data!);        });
+          _cachedBytes = Uint8List.fromList(resp.data!);
+        });
       }
     } catch (e) {
       print('_directDownload error: $e');
@@ -388,10 +399,12 @@ class _PixivImageState extends State<PixivImage> {
   /// 获取图片专用 Dio（复用 PixivImage._cacheDio，避免创建多余的 rhttp client）
   Future<Dio> _getImageDio() async {
     if (PixivImage._cacheDio != null) return PixivImage._cacheDio!;
-    return Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
-    ));
+    return Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
   }
 
   /// 向协调器请求加载槽位（同步，无延迟）。
@@ -478,7 +491,8 @@ class _PixivImageState extends State<PixivImage> {
           //（Image.memory 直接显示，完全绕过 CachedNetworkImage 管线）
           _coordinator.cancel(targetUrl);
           setState(() {
-            _cachedBytes = Uint8List.fromList(bytes);          });
+            _cachedBytes = Uint8List.fromList(bytes);
+          });
         }
       }
     } catch (_) {
@@ -521,7 +535,9 @@ class _PixivImageState extends State<PixivImage> {
   @override
   Widget build(BuildContext context) {
     final currentKey = url;
-    if (_lastKey != currentKey) { _lastKey = currentKey; }
+    if (_lastKey != currentKey) {
+      _lastKey = currentKey;
+    }
 
     // 方案 B: 如果已从缓存加载，直接显示（不受优先级协调影响）
     if (_cachedBytes != null) {
@@ -623,9 +639,12 @@ class _PixivImageState extends State<PixivImage> {
                 if (hint.isNotEmpty)
                   Padding(
                     padding: EdgeInsets.only(bottom: 4),
-                    child: Text(hint,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
-                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      hint,
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 TextButton(
                   onPressed: () {
@@ -642,9 +661,13 @@ class _PixivImageState extends State<PixivImage> {
         );
       },
       // 快速淡入淡出动画：350ms easeOut 曲线，提供丝滑顺眼的过渡体验
-      fadeInDuration: widget.fade ? const Duration(milliseconds: 350) : Duration.zero,
+      fadeInDuration: widget.fade
+          ? const Duration(milliseconds: 350)
+          : Duration.zero,
       fadeInCurve: Curves.easeOut,
-      fadeOutDuration: widget.fade ? const Duration(milliseconds: 350) : Duration.zero,
+      fadeOutDuration: widget.fade
+          ? const Duration(milliseconds: 350)
+          : Duration.zero,
       imageUrl: url,
       cacheManager: pixivCacheManager,
       height: height,

@@ -29,13 +29,13 @@ class UgoiraWidget extends StatefulWidget {
   final Size size;
   final UgoiraMetadataResponse ugoiraMetadataResponse;
 
-  const UgoiraWidget(
-      {Key? key,
-      required this.drawPools,
-      required this.delay,
-      required this.size,
-      required this.ugoiraMetadataResponse})
-      : super(key: key);
+  const UgoiraWidget({
+    Key? key,
+    required this.drawPools,
+    required this.delay,
+    required this.size,
+    required this.ugoiraMetadataResponse,
+  }) : super(key: key);
 
   @override
   _UgoiraWidgetState createState() => _UgoiraWidgetState();
@@ -115,10 +115,7 @@ class _UgoiraWidgetState extends State<UgoiraWidget> with RouteAware {
   @override
   Widget build(BuildContext context) {
     return image != null
-        ? CustomPaint(
-            painter: UgoiraPainter(image!),
-            size: widget.size,
-          )
+        ? CustomPaint(painter: UgoiraPainter(image!), size: widget.size)
         : Container();
   }
 }
@@ -132,13 +129,18 @@ class UgoiraPainter extends CustomPainter {
 
   @override
   Future<void> paint(Canvas canvas, Size size) async {
-    Rect dstRect =
-        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
+    Rect dstRect = Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
     canvas.drawImageRect(
-        image,
-        dstRect,
-        Rect.fromLTWH(0, 0, size.width.toDouble(), size.height.toDouble()),
-        _paint);
+      image,
+      dstRect,
+      Rect.fromLTWH(0, 0, size.width.toDouble(), size.height.toDouble()),
+      _paint,
+    );
   }
 
   @override

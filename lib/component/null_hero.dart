@@ -23,11 +23,6 @@ class NullHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return tag == null
-        ? child
-        : Hero(
-            tag: tag!,
-            child: child,
-          );
+    return tag == null ? child : Hero(tag: tag!, child: child);
   }
 }

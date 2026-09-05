@@ -19,10 +19,7 @@ import 'package:flutter/material.dart';
 class StarIcon extends StatefulWidget {
   final int state;
 
-  const StarIcon({
-    Key? key,
-    required this.state,
-  }) : super(key: key);
+  const StarIcon({Key? key, required this.state}) : super(key: key);
 
   @override
   _StarIconState createState() => _StarIconState();
@@ -65,13 +62,12 @@ class _StarIconState extends State<StarIcon> {
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         );
       case 1:
-        return Icon(Icons.favorite,
-            color: Theme.of(context).colorScheme.onSurfaceVariant);
-      default:
         return Icon(
           Icons.favorite,
-          color: Colors.red,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         );
+      default:
+        return Icon(Icons.favorite, color: Colors.red);
     }
   }
 }

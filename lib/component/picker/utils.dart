@@ -17,10 +17,11 @@ bool useWhiteForeground(Color backgroundColor, {double bias = 0.0}) {
   // return 1.05 / (color.computeLuminance() + 0.05) > 4.5;
 
   // New:
-  int v = sqrt(pow(backgroundColor.getRedInt(), 2) * 0.299 +
-          pow(backgroundColor.getGreenInt(), 2) * 0.587 +
-          pow(backgroundColor.getBlueInt(), 2) * 0.114)
-      .round();
+  int v = sqrt(
+    pow(backgroundColor.getRedInt(), 2) * 0.299 +
+        pow(backgroundColor.getGreenInt(), 2) * 0.587 +
+        pow(backgroundColor.getBlueInt(), 2) * 0.114,
+  ).round();
   return v < 130 + bias ? true : false;
 }
 
@@ -55,7 +56,8 @@ HSVColor hslToHsv(HSLColor color) {
   double s = 0.0;
   double v = 0.0;
 
-  v = color.lightness +
+  v =
+      color.lightness +
       color.saturation *
           (color.lightness < 0.5 ? color.lightness : 1 - color.lightness);
   if (v != 0) s = 2 - 2 * color.lightness / v;
@@ -191,7 +193,8 @@ String colorToHex(
   bool enableAlpha = true,
   bool toUpperCase = true,
 }) {
-  final String hex = (includeHashSign ? '#' : '') +
+  final String hex =
+      (includeHashSign ? '#' : '') +
       (enableAlpha ? _padRadix(color.getAlphaInt()) : '') +
       _padRadix(color.getRedInt()) +
       _padRadix(color.getGreenInt()) +
@@ -214,16 +217,16 @@ extension ColorExtension1 on String {
 // Extension from Color
 extension ColorExtension2 on Color {
   /// AARRGGBB
-  String toHexString(
-          {bool includeHashSign = false,
-          bool enableAlpha = true,
-          bool toUpperCase = true}) =>
-      colorToHex(
-        this,
-        includeHashSign: includeHashSign,
-        enableAlpha: enableAlpha,
-        toUpperCase: toUpperCase,
-      );
+  String toHexString({
+    bool includeHashSign = false,
+    bool enableAlpha = true,
+    bool toUpperCase = true,
+  }) => colorToHex(
+    this,
+    includeHashSign: includeHashSign,
+    enableAlpha: enableAlpha,
+    toUpperCase: toUpperCase,
+  );
 
   int toInt() =>
       getAlphaInt() << 24 |

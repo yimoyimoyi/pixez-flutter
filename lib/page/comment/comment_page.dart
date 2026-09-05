@@ -21,6 +21,8 @@ import 'package:easy_refresh/easy_refresh.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:pixez/component/comment_emoji_text.dart';
+import 'package:pixez/component/selection_tools.dart';
+import 'package:pixez/translation/translation_config.dart';
 import 'package:pixez/component/painter_avatar.dart';
 import 'package:pixez/component/pixez_default_header.dart';
 import 'package:pixez/component/pixiv_image.dart';
@@ -479,6 +481,7 @@ class _CommentPageState extends State<CommentPage> {
       },
       child: CommentEmojiText(
         text: comment.comment ?? "",
+        translateType: TranslateContentType.comment,
       ),
     );
   }
@@ -553,6 +556,8 @@ class _CommentPageState extends State<CommentPage> {
       bool supportTranslate) {
     final List<ContextMenuButtonItem> buttonItems =
         editableTextState.contextMenuButtonItems;
+    // 应用内翻译（通用类型；未开启配置时不插入）
+    addTranslateMenuItem(buttonItems, context: context, selectionText: _selectedText);
     if (supportTranslate) {
       buttonItems.insert(
         buttonItems.length,

@@ -24,8 +24,6 @@ class FailFace extends StatefulWidget {
 class _FailFaceState extends State<FailFace> {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Center(child: Text("QAQ"),),
-    );
+    return Container(child: Center(child: Text("QAQ")));
   }
 }

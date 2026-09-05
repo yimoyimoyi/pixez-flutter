@@ -30,9 +30,11 @@ import 'package:pixez/er/illust_cacher.dart';
 import 'package:pixez/fluent/fluentui.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/page/novel/history/novel_history_store.dart';
+import 'package:pixez/page/about/languages.dart';
 import 'package:pixez/page/splash/splash_page.dart';
 import 'package:pixez/page/splash/splash_store.dart';
 import 'package:pixez/paths_plugin.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/single_instance_plugin.dart';
 import 'package:pixez/src/generated/i18n/app_localizations.dart';
 import 'package:pixez/store/account_store.dart';
@@ -144,6 +146,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     });
     userSetting.askInit();
     userSetting.init();
+    // 机翻/AI 翻译：初始化依赖注入（配置与目标语言跟随 userSetting）
+    TranslationService.init(
+      configProvider: () => userSetting.translateConfig,
+      uiLanguageProvider: () =>
+          userSetting.languageNum < Languages.length
+              ? Languages[userSetting.languageNum].language
+              : 'en-US',
+    );
     accountStore.fetch();
     bookTagStore.init();
     muteStore.init();

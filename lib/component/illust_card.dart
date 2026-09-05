@@ -23,6 +23,7 @@ import 'package:pixez/component/null_hero.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/component/star_icon.dart';
 import 'package:pixez/constants.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/er/illust_cacher.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/er/prefer.dart';
@@ -41,6 +42,7 @@ class IllustCard extends StatefulWidget {
   final List<IllustStore>? iStores;
   final bool needToBan;
   final LightingStore lightingStore;
+
   /// 瀑布流中的位置索引，用于图片加载优先级协调
   final int? index;
 
@@ -367,12 +369,17 @@ class _IllustCardState extends State<IllustCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  store.illusts!.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.clip,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
+                // 标题翻译：只读内存缓存（详情页翻过的标题回列表可直接看到译文），零网络
+                Observer(
+                  builder: (_) => Text(
+                    TranslationService.instance.displayTitle(
+                      store.illusts!.title,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    strutStyle: StrutStyle(forceStrutHeight: true, leading: 0),
+                  ),
                 ),
                 Text(
                   store.illusts!.user.name,

@@ -30,6 +30,7 @@ import 'package:pixez/main.dart';
 import 'package:pixez/page/about/languages.dart';
 import 'package:pixez/fluent/page/hello/setting/copy_text_page.dart';
 import 'package:pixez/fluent/page/hello/setting/setting_cross_adapter_page.dart';
+import 'package:pixez/fluent/page/hello/setting/translation_setting_page.dart';
 import 'package:pixez/fluent/page/network/network_page.dart';
 import 'package:pixez/fluent/page/platform/platform_page.dart';
 import 'package:pixez/store/welcome_page_type.dart';
@@ -446,6 +447,18 @@ class _SettingQualityPageState extends State<SettingQualityPage>
               ),
             ),
           Divider(),
+          ListTile(
+            title: Text(I18n.of(context).translation_settings),
+            trailing: const Icon(FluentIcons.chevron_right),
+            onPressed: () {
+              Leader.push(
+                context,
+                const TranslationSettingPage(),
+                icon: const Icon(FluentIcons.translate),
+                title: Text(I18n.of(context).translation_settings),
+              );
+            },
+          ),
           ListTile(
             title: Text(I18n.of(context).follow_after_star),
             trailing: ToggleSwitch(

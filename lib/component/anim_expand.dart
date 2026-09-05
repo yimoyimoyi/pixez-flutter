@@ -5,7 +5,7 @@ class AnimExpand extends StatefulWidget {
   final Widget child;
 
   const AnimExpand({Key? key, required this.expand, required this.child})
-      : super(key: key);
+    : super(key: key);
 
   @override
   _AnimExpandState createState() => _AnimExpandState();
@@ -33,15 +33,11 @@ class _AnimExpandState extends State<AnimExpand> {
   Widget build(BuildContext context) {
     return AnimatedCrossFade(
       duration: const Duration(milliseconds: 200),
-      firstChild: Container(
-        height: 100,
-        child: widget.child,
-      ),
-      secondChild: Container(
-        child: widget.child,
-      ),
-      crossFadeState:
-          _expand ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+      firstChild: Container(height: 100, child: widget.child),
+      secondChild: Container(child: widget.child),
+      crossFadeState: _expand
+          ? CrossFadeState.showSecond
+          : CrossFadeState.showFirst,
     );
   }
 }

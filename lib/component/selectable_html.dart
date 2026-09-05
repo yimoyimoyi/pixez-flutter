@@ -16,25 +16,41 @@
 
 import 'dart:io';
 
+import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:pixez/component/picker/utils.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
+import 'package:pixez/i18n.dart';
 import 'package:pixez/supportor_plugin.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 
 class SelectableHtml extends StatefulWidget {
   final String data;
 
-  const SelectableHtml({Key? key, required this.data}) : super(key: key);
+  /// 传入则启用"翻译/原文"切换（机翻 AI 翻译），null 保持老行为
+  final TranslateContentType? translateType;
+  final String? translateId;
+
+  const SelectableHtml({
+    Key? key,
+    required this.data,
+    this.translateType,
+    this.translateId,
+  }) : super(key: key);
 
   @override
   _SelectableHtmlState createState() => _SelectableHtmlState();
 }
 
 class _SelectableHtmlState extends State<SelectableHtml> {
+  bool _showTranslated = false;
+
   @override
   void initState() {
     super.initState();
@@ -43,9 +59,9 @@ class _SelectableHtmlState extends State<SelectableHtml> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final content = Container(
       child: HtmlWidget(
-        widget.data,
+        _displayData(),
         customStylesBuilder: (e) {
           if (e.attributes.containsKey('href')) {
             final color = Theme.of(context).colorScheme.primary;
@@ -63,13 +79,83 @@ class _SelectableHtmlState extends State<SelectableHtml> {
             LPrinter.d("html tap url: $url");
             bool result = await Leader.pushWithUri(context, Uri.parse(url));
             if (!result) {
-              await launchUrl(Uri.parse(url),
-                  mode: LaunchMode.externalNonBrowserApplication);
+              await launchUrl(
+                Uri.parse(url),
+                mode: LaunchMode.externalNonBrowserApplication,
+              );
             }
           } catch (e) {
             SharePlus.instance.share(ShareParams(text: url));
           }
           return true;
+        },
+      ),
+    );
+    if (!_translationEnabled()) return content;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Observer(builder: (_) => _buildToggle()),
+        content,
+      ],
+    );
+  }
+
+  bool _translationEnabled() =>
+      widget.translateType != null && widget.translateId != null;
+
+  /// 显示内容：译文(全节点翻译完成) / 原文，Observer 追踪译文就绪后自动重建
+  String _displayData() {
+    if (!_translationEnabled() || !_showTranslated) return widget.data;
+    return TranslationService.instance.translatedCaptionHtml(
+          widget.data,
+          widget.translateType!,
+        ) ??
+        widget.data;
+  }
+
+  Widget _buildToggle() {
+    final service = TranslationService.instance;
+    if (!service.isTypeEnabled(widget.translateType!)) {
+      // 该内容类型未开启翻译：不显示按钮
+      return const SizedBox.shrink();
+    }
+    final pending = service.isPendingCaption(
+      widget.data,
+      widget.translateType!,
+    );
+    return SizedBox(
+      height: 32,
+      child: TextButton.icon(
+        icon: _showTranslated || pending
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.translate, size: 16),
+        label: Text(
+          _showTranslated
+              ? I18n.of(context).translation_show_original
+              : I18n.of(context).translate,
+          style: const TextStyle(fontSize: 13),
+        ),
+        onPressed: () async {
+          setState(() {
+            _showTranslated = !_showTranslated;
+          });
+          if (_showTranslated) {
+            final ok = await service.translateCaption(
+              widget.data,
+              widget.translateType!,
+            );
+            if (!ok && mounted) {
+              final _reason = TranslationService.instance.describeLastError();
+              BotToast.showText(
+                text: I18n.of(context).translation_failed + _reason,
+              );
+            }
+          }
         },
       ),
     );

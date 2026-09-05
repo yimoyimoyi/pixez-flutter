@@ -33,6 +33,7 @@ import 'package:pixez/network/oauth_client.dart';
 import 'package:pixez/page/about/languages.dart';
 import 'package:pixez/secure_plugin.dart';
 import 'package:pixez/store/welcome_page_type.dart';
+import 'package:pixez/translation/translation_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'user_setting.g.dart';
@@ -101,6 +102,7 @@ abstract class _UserSetting with Store {
   static const String DRAG_START_X_KEY = "drag_start_x";
   static const String AUTO_TAG_WHEN_STAR_KEY = "auto_tag_when_star";
   static const String HAPTIC_FEEDBACK_KEY = "haptic_feedback";
+  static const String TRANSLATION_CONFIG_KEY = "translation_config_v1";
 
   @observable
   double dragStartX = 0;
@@ -218,6 +220,8 @@ abstract class _UserSetting with Store {
   bool autoTagWhenStar = false;
   @observable
   bool hapticFeedback = true;
+  @observable
+  String translateConfigJson = '';
   static const String intialFormat = "{illust_id}_p{part}";
 
   @action
@@ -230,6 +234,17 @@ abstract class _UserSetting with Store {
   setFeedAIBadge(bool value) async {
     await prefs.setBool(FEED_AI_BADGE_KEY, value);
     feedAIBadge = value;
+  }
+
+  /// 机翻/AI 翻译配置（单 JSON key 存取，见 lib/translation/translation_config.dart）
+  TranslationConfig get translateConfig =>
+      TranslationConfig.decode(translateConfigJson);
+
+  @action
+  setTranslateConfig(TranslationConfig config) async {
+    final json = config.encode();
+    await prefs.setString(TRANSLATION_CONFIG_KEY, json);
+    translateConfigJson = json;
   }
 
   @action
@@ -481,6 +496,7 @@ abstract class _UserSetting with Store {
     crossCount = prefs.getInt(CROSS_COUNT_KEY) ?? 2;
     hCrossCount = prefs.getInt(H_CROSS_COUNT_KEY) ?? 4;
     feedAIBadge = prefs.getBool(FEED_AI_BADGE_KEY) ?? true;
+    translateConfigJson = prefs.getString(TRANSLATION_CONFIG_KEY) ?? '';
     padMode = prefs.getInt(PAD_MODE_KEY) ?? 0;
     await Hoster.initMap();
     themeInitState = 1;

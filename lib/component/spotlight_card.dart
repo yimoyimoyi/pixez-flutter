@@ -31,12 +31,14 @@ class _SpotlightCardState extends State<SpotlightCard> {
       if (_isTap) {
         _longPressTimer = null;
         Feedback.forLongPress(context);
-        Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
-          builder: (_) => _CoverPreviewPage(
-            url: widget.spotlight.thumbnail,
-            title: widget.spotlight.title,
+        Navigator.of(context, rootNavigator: true).push(
+          MaterialPageRoute(
+            builder: (_) => _CoverPreviewPage(
+              url: widget.spotlight.thumbnail,
+              title: widget.spotlight.title,
+            ),
           ),
-        ));
+        );
       }
     });
   }
@@ -58,12 +60,16 @@ class _SpotlightCardState extends State<SpotlightCard> {
 
     if (!_isTap) return;
     // 短按 → 特辑详情
-    Navigator.of(context, rootNavigator: true)
-        .push(MaterialPageRoute(builder: (BuildContext context) {
-      return SoupPage(
-          url: widget.spotlight.articleUrl,
-          spotlight: widget.spotlight);
-    }));
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (BuildContext context) {
+          return SoupPage(
+            url: widget.spotlight.articleUrl,
+            spotlight: widget.spotlight,
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -90,22 +96,23 @@ class _SpotlightCardState extends State<SpotlightCard> {
                   width: 160.0,
                   height: 90.0,
                   decoration: BoxDecoration(
-                      color: Theme.of(context).splashColor,
-                      borderRadius:
-                          const BorderRadius.all(Radius.circular(8.0))),
+                    color: Theme.of(context).splashColor,
+                    borderRadius: const BorderRadius.all(Radius.circular(8.0)),
+                  ),
                   child: Align(
                     alignment: AlignmentDirectional.bottomCenter,
                     child: ListTile(
-                        title: Text(
-                          widget.spotlight.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          widget.spotlight.pureTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        )),
+                      title: Text(
+                        widget.spotlight.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        widget.spotlight.pureTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -114,19 +121,19 @@ class _SpotlightCardState extends State<SpotlightCard> {
                 child: Card(
                   elevation: 8.0,
                   shape: RoundedRectangleBorder(
-                      borderRadius:
-                          const BorderRadius.all(Radius.circular(16.0))),
+                    borderRadius: const BorderRadius.all(Radius.circular(16.0)),
+                  ),
                   child: Container(
                     child: CachedNetworkImage(
                       imageUrl: widget.spotlight.thumbnail,
                       fadeInDuration: const Duration(milliseconds: 350),
                       fadeInCurve: Curves.easeOut,
                       fadeOutDuration: const Duration(milliseconds: 350),
-                      placeholder: (context, url) => Container(
-                        color: Theme.of(context).cardColor,
+                      placeholder: (context, url) =>
+                          Container(color: Theme.of(context).cardColor),
+                      httpHeaders: Hoster.header(
+                        url: widget.spotlight.thumbnail,
                       ),
-                      httpHeaders:
-                          Hoster.header(url: widget.spotlight.thumbnail),
                       fit: BoxFit.cover,
                       height: 150.0,
                       cacheManager: pixivCacheManager,
@@ -137,7 +144,7 @@ class _SpotlightCardState extends State<SpotlightCard> {
                   ),
                   clipBehavior: Clip.antiAlias,
                 ),
-              )
+              ),
             ],
           ),
         ),

@@ -76,7 +76,8 @@ class _State extends ConsumerState<FollowDetailAlert> {
                 child: _isLoading
                     ? Container(
                         height: 100,
-                        child: const Center(child: CircularProgressIndicator()))
+                        child: const Center(child: CircularProgressIndicator()),
+                      )
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -89,9 +90,7 @@ class _State extends ConsumerState<FollowDetailAlert> {
                               });
                             },
                           ),
-                          Divider(
-                            height: 1,
-                          ),
+                          Divider(height: 1),
                           if (_isFollowed)
                             Container(
                               child: TextButton(
@@ -112,9 +111,9 @@ class _State extends ConsumerState<FollowDetailAlert> {
                                   child: Text(I18n.of(context).cancel),
                                 ),
                               ),
-                              Expanded(child: _rightButton())
+                              Expanded(child: _rightButton()),
                             ],
-                          )
+                          ),
                         ],
                       ),
               ),

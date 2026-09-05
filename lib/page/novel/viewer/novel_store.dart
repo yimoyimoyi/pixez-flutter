@@ -24,6 +24,8 @@ import 'package:mobx/mobx.dart';
 import 'package:pixez/er/lprinter.dart';
 import 'package:pixez/main.dart';
 import 'package:pixez/models/novel_recom_response.dart';
+import 'package:pixez/translation/translation_config.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/models/novel_viewer_persist.dart';
 import 'package:pixez/models/novel_web_response.dart';
 import 'package:pixez/network/api_client.dart';
@@ -54,6 +56,25 @@ abstract class _NovelStoreBase with Store {
   @observable
   List<NovelSpansData> spans = [];
 
+  // ---------- 全文翻译（novelBody 类型） ----------
+  @observable
+  bool novelTranslating = false;
+  @observable
+  int novelTranslatedSpans = 0;
+  @observable
+  int novelTotalSpans = 0;
+  @observable
+  int novelTranslatedChars = 0;
+  @observable
+  int novelTotalChars = 0;
+  /// 失败的段落数（译文==原文/空等被校验拒绝，未写缓存，可重试）
+  @observable
+  int novelFailedSpans = 0;
+  /// 是否已完成全文翻译（成功/部分完成/中止，供 UI 区分状态）
+  @observable
+  bool novelTranslateDone = false;
+  int _translateEpoch = 0;
+
   NovelViewerPersistProvider _novelViewerPersistProvider =
       NovelViewerPersistProvider();
 
@@ -73,6 +94,146 @@ abstract class _NovelStoreBase with Store {
     await _novelViewerPersistProvider.open();
     await _novelViewerPersistProvider.delete(id);
     positionBooked = false;
+  }
+
+  /// 可翻译 span 谓词：正常类型、非空、非 `[` 开头（回退键）、不含 URL（jumpuri 回退产物）
+  static bool isTranslatableSpan(NovelSpansData span) =>
+      isTranslatableNovelSpan(span);
+
+  /// 全文翻译入口：以 \n 段落为翻译单元，按用户配置的批容量分批入队，
+  /// 每批可附前一段原文作上下文（useNovelContext）；可取消（epoch 令牌）、
+  /// 已译段落自动跳过（续传）。
+  @action
+  Future<void> translateFullText() async {
+    final service = TranslationService.instance;
+    const type = TranslateContentType.novelBody;
+    if (!service.isTypeEnabled(type) || novelTranslating) return;
+
+    final spansSnapshot = List<NovelSpansData>.from(spans);
+    // 段落级单元：span 索引 -> 段落原文
+    final paras = <MapEntry<int, String>>[];
+    for (var i = 0; i < spansSnapshot.length; i++) {
+      if (!isTranslatableSpan(spansSnapshot[i])) continue;
+      for (final seg in spansSnapshot[i].text.split('\n')) {
+        if (seg.trim().isEmpty) continue;
+        paras.add(MapEntry(i, seg));
+      }
+    }
+    if (paras.isEmpty) return;
+
+    final epoch = ++_translateEpoch;
+    final engineId = service.config.effectiveEngineFor(type);
+    final target = service.resolveTargetLang();
+    final batchChars = service.config.novelBatchChars;
+    final batchSpanCap = service.config.novelBatchSpanCap;
+    final useContext = service.config.useNovelContext;
+
+    novelTotalSpans = paras.length; // 进度单位为"段落"
+    novelTranslatedSpans = 0;
+    novelTotalChars = paras.fold<int>(0, (acc, e) => acc + e.value.length);
+    novelTranslatedChars = 0;
+    novelFailedSpans = 0;
+    novelTranslateDone = false;
+    novelTranslating = true;
+
+    try {
+      final batchIdxGroups = buildNovelBatches(
+        paras.map((e) => e.value).toList(),
+        batchSpanCap: batchSpanCap,
+        batchChars: batchChars,
+      );
+      // 提交窗口：一次排队 ≤ 2×maxConcurrency 批，组内提交后等待该组完成。
+      // 队列内的信号量限制真正在途并发数（切勿逐批 await 提交，否则退化为串行）。
+      // 取消/配置变化在窗口边界生效（已提交批自然完成并计入进度）。
+      final windowSize = (service.config.maxConcurrency * 2).clamp(2, 20);
+      var next = 0;
+      while (next < batchIdxGroups.length) {
+        if (epoch != _translateEpoch) break; // 取消：停止提交新批
+        // 配置/参数中途变化（换引擎/目标语言/开关）→ 中止避免译文混杂
+        if (service.config.effectiveEngineFor(type) != engineId ||
+            service.resolveTargetLang() != target) {
+          _translateEpoch = epoch + 1;
+          break;
+        }
+        final groupFutures = <Future<void>>[];
+        while (next < batchIdxGroups.length &&
+            groupFutures.length < windowSize) {
+          final group = batchIdxGroups[next];
+          groupFutures.add(_submitBatch(
+            group: group,
+            paras: paras,
+            type: type,
+            service: service,
+            useContext: useContext,
+            epoch: epoch,
+          ));
+          next++;
+        }
+        try {
+          await Future.wait(groupFutures);
+        } catch (_) {}
+      }
+    } catch (e) {
+      LPrinter.d('novel translate full failed: $e');
+    } finally {
+      novelTranslating = false;
+      novelTranslateDone = true;
+    }
+  }
+
+  /// 提交并执行一批（进度在完成回调更新，无需顺序完成）
+  Future<void> _submitBatch({
+    required List<int> group,
+    required List<MapEntry<int, String>> paras,
+    required TranslateContentType type,
+    required TranslationService service,
+    required bool useContext,
+    required int epoch,
+  }) async {
+    final batchParas = group.map((i) => paras[i].value).toList();
+    // 上下文段提示：批首段的前一段原文（末尾 ≤1200 字符）
+    String? contextText;
+    final firstIdx = group.first;
+    if (useContext && firstIdx > 0) {
+      var ctx = paras[firstIdx - 1].value;
+      if (ctx.length > 1200) {
+        ctx = ctx.substring(ctx.length - 1200);
+      }
+      contextText = ctx;
+    }
+    try {
+      await service.enqueueTexts(batchParas, type, contextText: contextText);
+    } catch (_) {
+      // 批次失败不阻塞其它批（队列内已静默回退，这里仅保证进度推进）
+    }
+    // 批执行完成后按"段落是否有译文"精确记账：
+    // 已在缓存/本次成功 → 进度+；仍无译文（失败/被校验拒绝）→ 失败计数+（可重试）
+    var done = 0;
+    var failed = 0;
+    for (final i in group) {
+      if (service.hasTranslationOf(paras[i].value, type)) {
+        done++;
+      } else {
+        failed++;
+      }
+    }
+    novelTranslatedSpans = (novelTranslatedSpans + done) > novelTotalSpans
+        ? novelTotalSpans
+        : novelTranslatedSpans + done;
+    novelFailedSpans = (novelFailedSpans + failed) > novelTotalSpans
+        ? novelTotalSpans
+        : novelFailedSpans + failed;
+    novelTranslatedChars += group
+        .map((i) => paras[i].value.length)
+        .fold<int>(0, (a, b) => a + b);
+  }
+
+  /// 取消全文翻译：在途批的 HTTP 不中断（结果写入缓存，重进可复用），仅中止后续批次
+  @action
+  void cancelTranslateFullText() {
+    _translateEpoch++;
+    novelTranslating = false;
+    novelTranslateDone = true;
   }
 
   @action
@@ -261,6 +422,62 @@ class ComputeSpan {
   final NovelWebResponse webResponse;
 
   ComputeSpan(this.context, this.webResponse);
+}
+
+/// 可翻译 span 谓词：正常类型、非空、非 `[` 开头（回退键）、不含 URL（jumpuri 回退产物）。
+/// 顶层函数以便 novel_store/novel_viewer/单测共享。
+bool isTranslatableNovelSpan(NovelSpansData span) {
+  if (span.type != NovelSpansType.normal) return false;
+  final text = span.text.trim();
+  if (text.isEmpty) return false;
+  if (text.startsWith('[')) return false;
+  if (RegExp(r'https?://\S+').hasMatch(text)) return false;
+  return true;
+}
+
+/// 统计可译段落数与字符数（\n 拆段、过滤空白段），供进度预估与循环共用。
+/// 顶层函数以便 novel_viewer/novel_store 共享（mixin 类的 static 不可经用户类访问）。
+({int parasCount, int charsCount}) novelTranslatableStats(
+    List<NovelSpansData> spans) {
+  var paras = 0;
+  var chars = 0;
+  for (final span in spans) {
+    if (!_NovelStoreBase.isTranslatableSpan(span)) continue;
+    for (final seg in span.text.split('\n')) {
+      if (seg.trim().isEmpty) continue;
+      paras++;
+      chars += seg.length;
+    }
+  }
+  return (parasCount: paras, charsCount: chars);
+}
+
+/// 批量分组：以段落数为主、字符数为兜底；单段超预算时单独成批。
+/// 返回段落索引分组（保持原顺序），供 novel_store 循环与单测共用。
+List<List<int>> buildNovelBatches(
+  List<String> paras, {
+  required int batchSpanCap,
+  required int batchChars,
+}) {
+  final batches = <List<int>>[];
+  var idx = 0;
+  while (idx < paras.length) {
+    final batch = <int>[];
+    var chars = 0;
+    while (idx < paras.length) {
+      final len = paras[idx].length;
+      if (batch.isNotEmpty &&
+          (batch.length >= batchSpanCap || chars + len > batchChars)) {
+        break;
+      }
+      batch.add(idx);
+      chars += len;
+      idx++;
+    }
+    if (batch.isEmpty) break;
+    batches.add(batch);
+  }
+  return batches;
 }
 
 Future<List<NovelSpansData>> buildSpans(NovelWebResponse webResponse) {

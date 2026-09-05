@@ -23,6 +23,7 @@ import 'package:pixez/er/hoster.dart';
 import 'package:pixez/component/pixiv_image.dart';
 import 'package:pixez/er/leader.dart';
 import 'package:pixez/er/lprinter.dart';
+import 'package:pixez/translation/translation_service.dart';
 import 'package:pixez/er/pixiv_image_source.dart';
 import 'package:pixez/i18n.dart';
 import 'package:pixez/main.dart';
@@ -407,7 +408,11 @@ class NovelSpansGenerator {
     } else if (data.type == NovelSpansType.uploadedImage) {
       return UploadedImageSpan(data.text);
     }
-    return TextSpan(text: data.text);
+    // normal 文案：段落级译文拼接（split('\n') 逐段取译文，缺译段落显示原文）。
+    // 译文只读不回写 span.text（不进括号解析器，译文含 '[' 也天然安全）
+    final translated = TranslationService.instance.translatedNovelBodyText(
+        data.text); // 需要时返回译文，否则 null
+    return TextSpan(text: translated ?? data.text);
   }
 }
 
