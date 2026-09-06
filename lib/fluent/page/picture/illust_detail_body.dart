@@ -65,7 +65,12 @@ class _IllustDetailBodyState extends State<IllustDetailBody> {
     if (_titleTranslatedShown) {
       final ok =
           await TranslationService.instance.translateTitle(illust.title);
-      if (!ok && mounted) _showTranslateFailed();
+      if (!ok && mounted) {
+        setState(() {
+          _titleTranslatedShown = false;
+        });
+        _showTranslateFailed();
+      }
     }
   }
 
@@ -76,14 +81,19 @@ class _IllustDetailBodyState extends State<IllustDetailBody> {
     });
     if (_tagTranslatedShown) {
       final ok = await TranslationService.instance.translateTags(illust);
-      if (!ok && mounted) _showTranslateFailed();
+      if (!ok && mounted) {
+        setState(() {
+          _tagTranslatedShown = false;
+        });
+        _showTranslateFailed();
+      }
     }
   }
 
   void _showTranslateFailed() {
     displayInfoBar(
       context,
-      builder: (context, VoidCallback) => InfoBar(
+      builder: (context, close) => InfoBar(
         title: Text(
           I18n.of(context).translation_failed +
               TranslationService.instance.describeLastError(),

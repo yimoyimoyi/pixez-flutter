@@ -123,7 +123,7 @@ class TranslationService {
   String? translatedOf(String raw, TranslateContentType type) {
     final key = keyOfText(raw, type);
     if (key == null) return null;
-    return caches.store.resultOf(key);
+    return caches.store.resultOf(key) ?? caches.memory.get(key);
   }
 
   /// 触发翻译一段纯文本（幂等：已有结果/在途直接返回）。
@@ -354,7 +354,8 @@ class TranslationService {
     final whole = SeqProtector.restore(
         rawComment, commentEmojiRegex, translatedSegments);
     if (whole.trim().isEmpty) return false;
-    final wholeKey = translationCacheKey(rawComment,
+    final trimmedComment = rawComment.trim();
+    final wholeKey = translationCacheKey(trimmedComment,
         engine: engine.id, targetLang: resolveTargetLang());
     if (!caches.store.has(wholeKey)) {
       await caches.disk.insert(TranslationCacheEntry(

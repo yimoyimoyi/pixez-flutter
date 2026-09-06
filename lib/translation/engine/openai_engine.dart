@@ -69,8 +69,10 @@ class OpenAiEngine implements TranslationEngine {
     if (config.isDeepSeek) {
       body['thinking'] = {
         'type': config.thinkingMode ? 'enabled' : 'disabled',
-        if (config.thinkingMode) 'reasoning_effort': config.reasoningEffort,
       };
+      if (config.thinkingMode) {
+        body['reasoning_effort'] = config.reasoningEffort;
+      }
     }
     return body;
   }
@@ -119,18 +121,45 @@ class OpenAiEngine implements TranslationEngine {
     if (content.isEmpty) {
       throw FormatException('empty completion');
     }
-    // 剥离 ```json 围栏等外围文本后解析
-    var parsed = _tryParseList(content);
-    if (parsed == null) {
-      final cleaned =
-          content.replaceFirst(RegExp(r'^```json\s*'), '').replaceFirst(RegExp(r'\s*```$'), '');
-      if (cleaned != content) parsed = _tryParseList(cleaned);
-    }
+    // 剥离思维链、围栏或外围文字后解析
+    final parsed = _parseJsonArray(content);
     if (parsed == null || parsed.length != texts.length) {
       throw FormatException(
           'bad completion array: got ${parsed?.length} expected ${texts.length}');
     }
     return parsed;
+  }
+
+  /// 鲁棒提取与解析 JSON 字符串数组（容错思维链、Markdown 围栏与前言/后记）
+  List<String>? _parseJsonArray(String rawContent) {
+    // 1. 直接尝试解析
+    var parsed = _tryParseList(rawContent);
+    if (parsed != null) return parsed;
+
+    // 2. 剥离 <think>...</think> 标签内容
+    var text = rawContent
+        .replaceAll(RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false), '')
+        .trim();
+    parsed = _tryParseList(text);
+    if (parsed != null) return parsed;
+
+    // 3. 剥离 ```json ... ``` 围栏
+    final fenceMatch = RegExp(r'```(?:json)?\s*([\s\S]*?)\s*```', caseSensitive: false)
+        .firstMatch(text);
+    if (fenceMatch != null) {
+      final insideFence = fenceMatch.group(1)!.trim();
+      parsed = _tryParseList(insideFence);
+      if (parsed != null) return parsed;
+    }
+
+    // 4. 提取最外层 [ ... ]
+    final arrayMatch = RegExp(r'\[[\s\S]*\]').firstMatch(text);
+    if (arrayMatch != null) {
+      parsed = _tryParseList(arrayMatch.group(0)!);
+      if (parsed != null) return parsed;
+    }
+
+    return null;
   }
 
   /// content 可能是嵌套字符串或对象结构，做多层提取
@@ -158,8 +187,8 @@ class OpenAiEngine implements TranslationEngine {
   List<String>? _tryParseList(String content) {
     try {
       final value = jsonDecode(content);
-      if (value is List && value.every((e) => e is String)) {
-        return value.cast<String>();
+      if (value is List) {
+        return value.map((e) => e?.toString() ?? '').toList();
       }
     } catch (_) {}
     return null;

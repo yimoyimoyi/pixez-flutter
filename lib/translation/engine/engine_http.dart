@@ -58,7 +58,9 @@ Future<String?> _proxyFromRegistry() async {
         for (final line in lines) {
           final match =
               RegExp(r'ProxyServer\s+REG_SZ\s+(\S+)').firstMatch(line);
-          if (match != null) return match.group(1);
+          if (match != null) {
+            return _parseProxyString(match.group(1)!);
+          }
         }
       }
     }
@@ -66,6 +68,30 @@ Future<String?> _proxyFromRegistry() async {
     // 注册表读取失败忽略，回到直连
   }
   return null;
+}
+
+String? _parseProxyString(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  // 处理分号分隔多协议配置，如 http=127.0.0.1:7890;https=127.0.0.1:7890
+  if (trimmed.contains(';')) {
+    final parts = trimmed.split(';');
+    for (final p in parts) {
+      final kv = p.split('=');
+      if (kv.length == 2) {
+        final proto = kv[0].trim().toLowerCase();
+        if (proto == 'https' || proto == 'http') {
+          return kv[1].trim();
+        }
+      }
+    }
+    final first = parts.first.split('=').last.trim();
+    if (first.isNotEmpty) return first;
+  }
+  if (trimmed.contains('=')) {
+    return trimmed.split('=').last.trim();
+  }
+  return trimmed;
 }
 
 /// 创建翻译引擎专用 Dio（独立域名，不挂 Pixiv Hoster）

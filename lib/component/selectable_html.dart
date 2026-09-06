@@ -163,6 +163,9 @@ class _SelectableHtmlState extends State<SelectableHtml> {
                 _pending = false;
               });
               if (!ok) {
+                setState(() {
+                  _showTranslated = false;
+                });
                 final _reason = TranslationService.instance.describeLastError();
                 BotToast.showText(
                   text: I18n.of(context).translation_failed + _reason,

@@ -99,7 +99,7 @@ void main() {
       final queue = TranslationQueue.instance;
       final fake = _FakeEngine();
       final caches = TranslationCacheStores(
-        disk: TranslationCacheProvider(),
+        disk: _NoopDisk(),
         memory: TranslationMemoryCache(),
         store: TranslationStore(),
       );
@@ -124,7 +124,7 @@ void main() {
       final queue = TranslationQueue.instance;
       final fake = _FakeEngine();
       final caches = TranslationCacheStores(
-        disk: TranslationCacheProvider(),
+        disk: _NoopDisk(),
         memory: TranslationMemoryCache(),
         store: TranslationStore(),
       );
@@ -158,4 +158,15 @@ void main() {
       expect(decoded.useNovelContext, false);
     });
   });
+}
+
+class _NoopDisk extends TranslationCacheProvider {
+  @override
+  Future<void> insert(TranslationCacheEntry entry) async {}
+
+  @override
+  Future<TranslationCacheEntry?> get(String key) async => null;
+
+  @override
+  Future<List<TranslationCacheEntry>> getAllNotExpired() async => [];
 }

@@ -319,6 +319,9 @@ class _NovelViewerPageState extends State<NovelViewerPage> {
     if (_titleShowTranslated && title.trim().isNotEmpty) {
       final ok = await service.translateTitle(title);
       if (!ok && mounted) {
+        setState(() {
+          _titleShowTranslated = false;
+        });
         BotToast.showText(
           text:
               I18n.of(context).translation_failed +

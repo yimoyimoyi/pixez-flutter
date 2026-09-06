@@ -210,9 +210,11 @@ abstract class _NovelStoreBase with Store {
     // 已在缓存/本次成功 → 进度+；仍无译文（失败/被校验拒绝）→ 失败计数+（可重试）
     var done = 0;
     var failed = 0;
+    var doneChars = 0;
     for (final i in group) {
       if (service.hasTranslationOf(paras[i].value, type)) {
         done++;
+        doneChars += paras[i].value.length;
       } else {
         failed++;
       }
@@ -223,9 +225,9 @@ abstract class _NovelStoreBase with Store {
     novelFailedSpans = (novelFailedSpans + failed) > novelTotalSpans
         ? novelTotalSpans
         : novelFailedSpans + failed;
-    novelTranslatedChars += group
-        .map((i) => paras[i].value.length)
-        .fold<int>(0, (a, b) => a + b);
+    novelTranslatedChars = (novelTranslatedChars + doneChars) > novelTotalChars
+        ? novelTotalChars
+        : novelTranslatedChars + doneChars;
   }
 
   /// 取消全文翻译：在途批的 HTTP 不中断（结果写入缓存，重进可复用），仅中止后续批次

@@ -145,9 +145,12 @@ class _SelectableHtmlState extends State<SelectableHtml> {
                 _pending = false;
               });
               if (!ok) {
+                setState(() {
+                  _showTranslated = false;
+                });
                 displayInfoBar(
                   context,
-                  builder: (context, VoidCallback) => InfoBar(
+                  builder: (context, close) => InfoBar(
                     title: Text(
                       I18n.of(context).translation_failed +
                           TranslationService.instance.describeLastError(),

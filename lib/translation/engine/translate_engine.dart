@@ -30,30 +30,34 @@ class TranslationSplitter {
   static List<String> split(String text) {
     if (text.length <= maxCharsPerSegment) return [text];
     final segments = <String>[];
-    var last = 0;
-    // 优先在句末标点/换行断开
-    for (final m in RegExp(r'[。！？!?；;\n]').allMatches(text)) {
-      segments.add(text.substring(last, m.end));
-      last = m.end;
-      if (text.length - last <= maxCharsPerSegment) break;
-    }
-    if (last < text.length) {
-      // 尾部剩余（可能无标点），再按上限硬切
-      segments.addAll(_splitHard(text.substring(last)));
+    var start = 0;
+    final punctRegex = RegExp(r'[。！？!?；;\n]');
+
+    while (start < text.length) {
+      final remaining = text.length - start;
+      if (remaining <= maxCharsPerSegment) {
+        segments.add(text.substring(start));
+        break;
+      }
+
+      // 考察窗口 [start, start + maxCharsPerSegment]
+      final windowEnd = start + maxCharsPerSegment;
+      final window = text.substring(start, windowEnd);
+
+      // 从窗口末尾向前寻找最近的断句标点
+      final matches = punctRegex.allMatches(window).toList();
+      if (matches.isNotEmpty) {
+        final lastMatch = matches.last;
+        final cutPoint = start + lastMatch.end;
+        segments.add(text.substring(start, cutPoint));
+        start = cutPoint;
+      } else {
+        // 窗口内无标点：硬切
+        segments.add(text.substring(start, windowEnd));
+        start = windowEnd;
+      }
     }
     return segments;
-  }
-
-  /// 无论标点按上限硬切
-  static List<String> _splitHard(String segment) {
-    if (segment.length <= maxCharsPerSegment) return [segment];
-    final result = <String>[];
-    for (var i = 0; i < segment.length; i += maxCharsPerSegment) {
-      final end =
-          i + maxCharsPerSegment > segment.length ? segment.length : i + maxCharsPerSegment;
-      result.add(segment.substring(i, end));
-    }
-    return result;
   }
 }
 

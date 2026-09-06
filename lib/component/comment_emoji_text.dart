@@ -38,6 +38,9 @@ class _CommentEmojiTextState extends State<CommentEmojiText> {
     if (_showTranslated) {
       final ok = await _service.translateComment(widget.text);
       if (!ok && mounted) {
+        setState(() {
+          _showTranslated = false;
+        });
         final _reason = TranslationService.instance.describeLastError();
         BotToast.showText(text: I18n.of(context).translation_failed + _reason);
       }
@@ -66,19 +69,21 @@ class _CommentEmojiTextState extends State<CommentEmojiText> {
             alignment: Alignment.centerRight,
             child: SizedBox(
               height: 24,
-              child: TextButton(
-                onPressed: _toggleTranslate,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  minimumSize: const Size(0, 24),
-                ),
-                child: Text(
-                  _pending
-                      ? '...'
-                      : (_showTranslated
-                            ? I18n.of(context).translation_show_original
-                            : I18n.of(context).translate),
-                  style: const TextStyle(fontSize: 12),
+              child: Observer(
+                builder: (_) => TextButton(
+                  onPressed: _toggleTranslate,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    minimumSize: const Size(0, 24),
+                  ),
+                  child: Text(
+                    _pending
+                        ? '...'
+                        : (_showTranslated
+                              ? I18n.of(context).translation_show_original
+                              : I18n.of(context).translate),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
               ),
             ),

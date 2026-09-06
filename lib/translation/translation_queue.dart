@@ -188,6 +188,10 @@ class TranslationQueue {
         final count = item.value.length > 900
             ? TranslationSplitter.split(item.value).length
             : 1;
+        if (segIndex + count > results.length) {
+          lastError = 'incomplete translation results';
+          break;
+        }
         final parts = results.sublist(segIndex, segIndex + count);
         segIndex += count;
         final joined = parts.join('').trim();

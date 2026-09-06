@@ -22,6 +22,20 @@ class TranslationDialog extends StatefulWidget {
 class _TranslationDialogState extends State<TranslationDialog> {
   bool _translating = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          !TranslationService.instance.hasTranslationOf(
+            widget.text,
+            TranslateContentType.generic,
+          )) {
+        _translate();
+      }
+    });
+  }
+
   Future<void> _translate() async {
     setState(() => _translating = true);
     final ok = await TranslationService.instance.translateText(
@@ -90,6 +104,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
             );
             if (t != null) {
               Clipboard.setData(ClipboardData(text: t));
+              BotToast.showText(text: I18n.of(context).copied_to_clipboard);
             }
           },
           child: Text(I18n.of(context).copy),

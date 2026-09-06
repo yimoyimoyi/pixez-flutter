@@ -67,19 +67,19 @@ void main() {
       final text = ('これはテストです。' * 150);
       expect(text.length, greaterThan(900));
       final parts = TranslationSplitter.split(text);
-      expect(parts.length, greaterThan(1));
+      expect(parts.length, 2);
       // 按序拼回与原文本一致
       expect(parts.join(), text);
-      // 每段不超过上限+句点
+      // 每段不超过上限
       for (final p in parts) {
-        expect(p.length, lessThanOrEqualTo(900 + 1));
+        expect(p.length, lessThanOrEqualTo(900));
       }
     });
 
     test('无标点超长文本硬切', () {
       final text = 'a' * 2500;
       final parts = TranslationSplitter.split(text);
-      expect(parts.length, greaterThan(1));
+      expect(parts.length, 3);
       expect(parts.join(), text);
       for (final p in parts) {
         expect(p.length, lessThanOrEqualTo(900));
@@ -122,7 +122,7 @@ void main() {
           'https://api.deepseek.com/chat/completions');
     });
 
-    test('DeepSeek 端点关闭思考模式，其它端点不传 thinking', () {
+    test('DeepSeek 端点思考参数规范（thinking 与顶级 reasoning_effort）', () {
       final deepseek = OpenAiEngine.buildCompletionsBody(
         config: OpenAiEngineConfig(baseUrl: 'https://api.deepseek.com/v1'),
         texts: ['テスト'],
@@ -130,6 +130,20 @@ void main() {
         systemPrompt: 'translate',
       );
       expect(deepseek['thinking'], {'type': 'disabled'});
+      expect(deepseek.containsKey('reasoning_effort'), false);
+
+      final deepseekThinking = OpenAiEngine.buildCompletionsBody(
+        config: OpenAiEngineConfig(
+          baseUrl: 'https://api.deepseek.com/v1',
+          thinkingMode: true,
+          reasoningEffort: 'low',
+        ),
+        texts: ['テスト'],
+        targetLang: 'zh-CN',
+        systemPrompt: 'translate',
+      );
+      expect(deepseekThinking['thinking'], {'type': 'enabled'});
+      expect(deepseekThinking['reasoning_effort'], 'low');
 
       final other = OpenAiEngine.buildCompletionsBody(
         config: OpenAiEngineConfig(baseUrl: 'https://api.example.com/v1'),
@@ -138,6 +152,7 @@ void main() {
         systemPrompt: 'translate',
       );
       expect(other.containsKey('thinking'), false);
+      expect(other.containsKey('reasoning_effort'), false);
     });
 
     test('messages 包含完整翻译指令与文本数组', () {
@@ -162,6 +177,8 @@ void main() {
           byType: {
             TranslateContentType.caption:
                 PerTypeTranslateConfig(engine: TranslateEngineOption.openai),
+            TranslateContentType.comment:
+                PerTypeTranslateConfig(engine: TranslateEngineOption.openai),
           },
           openai: OpenAiEngineConfig(baseUrl: 'http://127.0.0.1:11434'),
         ),
@@ -183,6 +200,13 @@ void main() {
       final manualKey = translationCacheKey(raw.trim(),
           engine: 'openai', targetLang: 'zh-CN');
       expect(serviceKey, manualKey, reason: 'key 必须基于 trim 文本');
+    });
+
+    test('评论带首尾空白与换行时 key 一致', () async {
+      final service = TranslationService.instance;
+      const commentRaw = '\n  素敵な作品ですね！  \n';
+      final key = service.keyOfText(commentRaw, TranslateContentType.comment);
+      expect(key, translationCacheKey('素敵な作品ですね！', engine: 'openai', targetLang: 'zh-CN'));
     });
   });
 

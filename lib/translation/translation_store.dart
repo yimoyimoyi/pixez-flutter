@@ -11,12 +11,14 @@ part 'translation_store.g.dart';
 class TranslationStore = _TranslationStoreBase with _$TranslationStore;
 
 abstract class _TranslationStoreBase with Store {
+  static const int maxStoreEntries = 5000;
+
   @observable
-  Map<String, String> translated = {};
+  ObservableMap<String, String> translated = ObservableMap<String, String>();
 
   /// 在途请求的 key（供 UI 显示翻译中状态）
   @observable
-  Set<String> pending = {};
+  ObservableSet<String> pending = ObservableSet<String>();
 
   bool has(String key) => translated.containsKey(key);
 
@@ -25,29 +27,34 @@ abstract class _TranslationStoreBase with Store {
   @action
   void setResult(String key, String value) {
     if (value.isEmpty || translated[key] == value) return;
-    translated = Map<String, String>.from(translated)..[key] = value;
+    translated[key] = value;
+    while (translated.length > maxStoreEntries) {
+      translated.remove(translated.keys.first);
+    }
   }
 
   @action
   void markPending(String key, bool value) {
-    final next = Set<String>.from(pending);
     if (value) {
-      next.add(key);
+      pending.add(key);
     } else {
-      next.remove(key);
+      pending.remove(key);
     }
-    pending = next;
   }
 
   /// 启动 warmup：把磁盘缓存未过期条目整体载入内存
   @action
   void loadAll(Map<String, String> entries) {
-    translated = Map<String, String>.from(entries);
+    translated.clear();
+    translated.addAll(entries);
+    while (translated.length > maxStoreEntries) {
+      translated.remove(translated.keys.first);
+    }
   }
 
   @action
   void clear() {
-    translated = {};
-    pending = {};
+    translated.clear();
+    pending.clear();
   }
 }

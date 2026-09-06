@@ -79,6 +79,9 @@ class _IllustDetailContentState extends State<IllustDetailContent> {
           break; // 评论/小说正文/选区翻译由各自组件触发
       }
       if (!ok && mounted) {
+        setState(() {
+          _showTranslated[type] = false;
+        });
         final _reason = TranslationService.instance.describeLastError();
         BotToast.showText(text: I18n.of(context).translation_failed + _reason);
       }
